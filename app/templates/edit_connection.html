@@ -1,0 +1,30 @@
+{% extends "base.html" %}
+{% block title %}Edit {{ provider.name }} connection · Bike Garage{% endblock %}
+{% block content %}
+<style>.activity-picker{margin-top:7px}.activity-picker-columns{display:grid;grid-template-columns:1fr 1fr;gap:12px}.activity-picker-column{border:1px solid #cfcac0;border-radius:8px;background:#fff;min-height:245px;padding:8px}.activity-picker-column-heading{display:flex;align-items:center;justify-content:space-between}.activity-picker-column h3{font-size:.75rem;text-transform:uppercase;letter-spacing:.06em;color:var(--muted);margin:4px 7px 8px}.activity-picker-clear{padding:4px 7px;background:transparent;color:var(--muted);font-size:.75rem}.activity-picker-clear:hover{color:var(--ink);background:#e8f2ed}.activity-picker-list{display:grid;gap:4px}.activity-picker-item{display:flex;align-items:center;justify-content:space-between;gap:8px;width:100%;padding:7px 9px;border:0;border-radius:6px;background:transparent;color:var(--ink);font:inherit;text-align:left;cursor:pointer}.activity-picker-item:hover{background:#e8f2ed}.activity-picker-item span{font-size:.8rem;color:var(--green);font-weight:700}.activity-picker-empty{color:var(--muted);font-size:.85rem;margin:10px 7px}@media(max-width:650px){.activity-picker-columns{grid-template-columns:1fr}}</style>
+<p class="eyebrow">PROVIDER CONNECTIONS / EDIT</p>
+<h1>Edit {{ provider.name }}</h1>
+<p class="lead">Update the local connection details. Saving clears the old test result so the updated connection can be verified again.</p>
+<form class="card form-card" method="post">
+  <label>Connection name<input name="display_name" value="{{ provider_connection.display_name }}" required></label>
+  <label>Connection identifier<input name="identifier" value="{{ provider_connection.identifier }}" required pattern="[a-z0-9][a-z0-9_-]{0,63}"><span class="field-help">Stable local ID for resolver rules.</span></label>
+  <label>Strava Proxy URL<input name="endpoint_url" type="url" value="{{ provider_connection.endpoint_url }}" required></label>
+  <label>Proxy account identifier<input name="external_account_id" value="{{ provider_connection.external_account_id }}" required pattern="[A-Za-z0-9][A-Za-z0-9_-]{0,63}"></label>
+  <label>Proxy API Key<input name="access_token" type="password" placeholder="Leave empty to keep the saved key"></label>
+  <label>Activity types</label>
+  <div class="activity-picker" data-activity-picker>
+    <div class="activity-picker-columns">
+      <section class="activity-picker-column"><h3>Available</h3><div class="activity-picker-list" data-activity-available>
+        {% for activity_type in activity_types %}{% if provider_connection.activity_types and activity_type not in provider_connection.activity_types %}<button type="button" class="activity-picker-item" data-activity-value="{{ activity_type }}" data-move="add"><strong>{{ activity_type }}</strong><span>Add</span></button>{% endif %}{% endfor %}
+      </div></section>
+      <section class="activity-picker-column"><div class="activity-picker-column-heading"><h3>Selected</h3><button type="button" class="activity-picker-clear" data-clear-selected>Remove all</button></div><div class="activity-picker-list" data-activity-selected>
+        {% for activity_type in activity_types %}{% if not provider_connection.activity_types or activity_type in provider_connection.activity_types %}<button type="button" class="activity-picker-item" data-activity-value="{{ activity_type }}" data-move="remove"><strong>{{ activity_type }}</strong><span>Remove</span></button>{% endif %}{% endfor %}
+      </div><p class="activity-picker-empty" data-activity-empty hidden>No activity types selected.</p></section>
+    </div>
+  </div>
+  <p class="field-help">Click an activity type to add or remove it. An empty selection imports all types.</p>
+  <p class="field-help">A blank Proxy API Key retains the existing saved key. After saving, use “Test connection” to validate the updated endpoint and load the activity preview again.</p>
+  <div class="form-actions"><a href="/providers">Cancel</a><button type="submit">Save changes</button></div>
+</form>
+<script src="/static/activity-picker.js"></script>
+{% endblock %}

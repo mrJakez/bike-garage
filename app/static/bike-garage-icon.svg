@@ -1,0 +1,11 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256" role="img" aria-labelledby="title description">
+  <title id="title">Bike Garage</title>
+  <desc id="description">A bicycle inside a stylised garage</desc>
+  <rect width="256" height="256" rx="56" fill="#1d2423"/>
+  <path d="M47 119 128 55l81 64v82a15 15 0 0 1-15 15H62a15 15 0 0 1-15-15Z" fill="#2f7d63"/>
+  <path d="M43 123 128 54l85 69" fill="none" stroke="#bfe4d1" stroke-width="12" stroke-linecap="round" stroke-linejoin="round"/>
+  <circle cx="91" cy="178" r="27" fill="none" stroke="#f7f4ed" stroke-width="8"/>
+  <circle cx="168" cy="178" r="27" fill="none" stroke="#f7f4ed" stroke-width="8"/>
+  <path d="m91 178 30-46 26 46H91l49 0 17-57 11 57M121 132h34m-47-7h23m25-4h21" fill="none" stroke="#f7f4ed" stroke-width="8" stroke-linecap="round" stroke-linejoin="round"/>
+  <circle cx="121" cy="132" r="4" fill="#f7f4ed"/>
+</svg>

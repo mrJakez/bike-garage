@@ -1,0 +1,176 @@
+{% extends "base.html" %}
+{% set editing = bike is not none %}
+{% block title %}{{ 'Edit' if editing else 'Add' }} bike · Bike Garage{% endblock %}
+{% block content %}
+<p class="eyebrow">GARAGE / {{ 'EDIT' if editing else 'ADD BIKE' }}</p>
+<div class="page-heading bike-form-heading">
+  <div>
+    <h1>{{ 'Edit bike' if editing else 'Add bike' }}</h1>
+    <p class="lead">Keep the bike easy to recognize and give the resolver the hardware identities it needs.</p>
+  </div>
+</div>
+
+<form class="bike-editor" method="post" enctype="multipart/form-data" action="{{ '/bikes/' ~ bike.id ~ '/edit' if editing else '/bikes' }}">
+  <aside class="bike-editor-media">
+    <div class="bike-photo-frame" data-bike-photo-frame>
+      {% if editing %}
+      <img src="/bike-photos/{{ bike.photo_filename }}" alt="{{ bike.name }}" data-bike-photo-preview>
+      {% else %}
+      <div class="bike-photo-placeholder" data-bike-photo-placeholder><span>+</span><small>Your bike photo</small></div>
+      {% endif %}
+      <label class="bike-photo-change" for="bike-photo">{{ 'Change photo' if editing else 'Choose photo' }}</label>
+    </div>
+    <input id="bike-photo" name="photo" type="file" accept="image/jpeg,image/png,image/webp" hidden data-bike-photo-input>
+    <p class="field-help">JPEG, PNG or WebP, up to 5 MB. {% if editing %}Leave it unchanged to keep the current image.{% else %}A placeholder is used until you add one.{% endif %}</p>
+  </aside>
+
+  <div class="bike-editor-content">
+    <section class="bike-editor-card">
+      <div class="section-heading"><div><p class="eyebrow">IDENTITY</p><h2>The bike</h2></div><p>These details appear throughout your garage and resolver rules.</p></div>
+      <div class="bike-field-grid">
+        <label class="bike-editor-field bike-field-wide">Name<input name="name" value="{{ bike.name if editing else '' }}" placeholder="Tarmac SL8" required></label>
+        <label class="bike-editor-field">Bike type<select class="bike-type-select" name="bike_type" required>
+          <option value="" disabled {% if not editing %}selected{% endif %}>Select a bike type</option>
+          {% for bike_type in ('Road', 'Gravel', 'Mountainbike') %}
+          <option value="{{ bike_type }}" {% if editing and bike.bike_type == bike_type %}selected{% endif %}>{{ bike_type }}</option>
+          {% endfor %}
+        </select></label>
+        <label class="bike-editor-field">Owner<input name="owner_name" value="{{ bike.owner_name if editing else user.display_name }}" required></label>
+        <label class="bike-editor-field bike-field-wide">Identifier<input name="identifier" value="{{ bike.identifier if editing else '' }}" placeholder="tarmac" required><span class="field-help">Stable key used in expressions such as <code>bikes.find(identifier="tarmac")</code>.</span></label>
+      </div>
+    </section>
+
+    <section class="bike-editor-card mileage-card">
+      <div class="section-heading"><div><p class="eyebrow">MILEAGE</p><h2>Opening baseline</h2></div><p>All assigned activity distance from Garage start is added on top.</p></div>
+      <label class="bike-editor-field mileage-input">Starting tracked mileage<span class="input-with-suffix"><input name="starting_mileage_km" type="number" min="0" step="0.1" value="{{ '%.1f'|format((bike.starting_mileage_m or 0) / 1000) if editing else '0.0' }}"><span>km</span></span></label>
+    </section>
+
+    <section class="bike-editor-card">
+      <div class="section-heading"><div><p class="eyebrow">STRAVA</p><h2>Strava bike mappings</h2></div><p>Choose the bike for each connected Strava account. Assigned rides can then be corrected automatically.</p></div>
+      {% if strava_gears %}
+      <div class="strava-gear-picker" data-strava-gear-picker>
+        <div class="strava-gear-chips" data-gear-chips aria-live="polite">
+          {% for gear in strava_gears if gear.selected %}
+          <span class="strava-gear-chip" data-gear-chip data-gear-id="{{ gear.id }}">
+            <span>{{ gear.connection_name }} · {{ gear.name }}</span><button type="button" aria-label="Remove {{ gear.name }}" data-remove-gear>×</button>
+            <input type="hidden" name="strava_gear_ids" value="{{ gear.id }}">
+          </span>
+          {% endfor %}
+          <p class="field-help" data-gear-empty {% if strava_gears|selectattr('selected')|list %}hidden{% endif %}>No Strava bike linked yet.</p>
+        </div>
+        <div class="strava-gear-add">
+          <select class="bike-type-select" data-gear-select aria-label="Available Strava bikes">
+            <option value="">Choose an active Strava bike…</option>
+            {% for gear in strava_gears %}
+            <option value="{{ gear.id }}" data-label="{{ gear.connection_name }} · {{ gear.name }}" {% if not gear.available or gear.selected %}disabled{% endif %}>{{ gear.connection_name }} · {{ gear.name }}{% if not gear.available %} — linked to {{ gear.mapped_bike_name }}{% endif %}</option>
+            {% endfor %}
+          </select>
+          <button class="button-secondary" type="button" data-add-gear>Add mapping</button>
+        </div>
+      </div>
+      {% else %}
+      <p class="field-help">No cached Strava bikes yet. Connect a Strava Proxy account, then open this page again.</p>
+      {% endif %}
+      {% for error in strava_gear_errors or [] %}<p class="field-help strava-gear-error">Could not refresh Strava bikes: {{ error }}</p>{% endfor %}
+    </section>
+
+    <section class="bike-editor-card">
+      <div class="section-heading"><div><p class="eyebrow">HARDWARE</p><h2>Components &amp; ANT+ identities</h2></div><p>Optional identifiers let Hammerhead FIT data resolve the bike automatically.</p></div>
+      <div class="component-editor-list">
+        <article class="component-editor-item"><div class="component-editor-icon">⇄</div><div><h3>Electronic shifting</h3><p>Rear derailleur and shift-system identity.</p></div><label class="bike-editor-field component-id-field"><span>ANT+ device number</span><input name="shifting_ant_device_number" type="text" inputmode="numeric" pattern="[0-9]*" value="{{ components.get('shifting', '') }}" placeholder="e.g. 16096"></label></article>
+        <article class="component-editor-item"><div class="component-editor-icon">⚡</div><div><h3>Bike power / crank</h3><p>Power-meter or crank identity.</p></div><label class="bike-editor-field component-id-field"><span>ANT+ device number</span><input name="bike_power_ant_device_number" type="text" inputmode="numeric" pattern="[0-9]*" value="{{ components.get('bike_power', '') }}" placeholder="e.g. 24279"></label></article>
+        <article class="component-editor-item"><div class="component-editor-icon">↕</div><div><h3>Seatpost</h3><p>Electronic dropper or seatpost identity.</p></div><label class="bike-editor-field component-id-field"><span>ANT+ device number</span><input name="seatpost_ant_device_number" type="text" inputmode="numeric" pattern="[0-9]*" value="{{ components.get('seatpost', '') }}" placeholder="Optional"></label></article>
+      </div>
+    </section>
+
+    <div class="form-actions bike-editor-actions"><a href="{{ '/bikes/' ~ bike.id if editing else '/bikes' }}">Cancel</a><button type="submit">{{ 'Save changes' if editing else 'Create bike' }}</button></div>
+  </div>
+</form>
+
+<style>
+  .bike-editor { display:grid; grid-template-columns:minmax(230px, .62fr) minmax(0, 1.7fr); gap:24px; align-items:start; max-width:1180px; }
+  .bike-editor-media, .bike-editor-card { background:var(--paper); border:1px solid var(--line); border-radius:18px; box-shadow:0 2px 5px #1d242309; }
+  .bike-editor-media { position:sticky; top:24px; padding:18px; text-align:center; }
+  .bike-photo-frame { position:relative; aspect-ratio:1; overflow:hidden; border-radius:14px; background:#e6eee9; }
+  .bike-photo-frame img { width:100%; height:100%; display:block; object-fit:cover; }
+  .bike-photo-placeholder { height:100%; display:grid; place-content:center; gap:9px; color:var(--green); background:linear-gradient(140deg,#dfece5,#f8f5ed); }
+  .bike-photo-placeholder span { font-size:48px; line-height:.8; font-weight:300; }
+  .bike-photo-placeholder small { color:var(--muted); font-weight:700; }
+  .bike-photo-change { position:absolute; right:10px; bottom:10px; display:inline-flex; justify-content:center; padding:8px 11px; border:1px solid #fffdf9; border-radius:8px; background:#fffdf9e8; color:var(--ink); box-shadow:0 2px 8px #1d24232e; font-size:.78rem; font-weight:800; cursor:pointer; backdrop-filter:blur(4px); }
+  .bike-photo-change:hover { background:#fffdf9; color:var(--green); }
+  .bike-editor-media .field-help { margin:12px 0 0; text-align:left; }
+  .bike-editor-content { display:grid; gap:18px; }
+  .bike-editor-card { padding:24px; }
+  .section-heading { display:flex; justify-content:space-between; gap:24px; margin-bottom:20px; }
+  .section-heading .eyebrow { margin:0 0 4px; }
+  .section-heading h2 { margin:0; font-size:22px; }
+  .section-heading > p { max-width:330px; margin:0; color:var(--muted); font-size:14px; line-height:1.45; }
+  .bike-field-grid { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:16px; }
+  .bike-field-wide { grid-column:1 / -1; }
+  .bike-editor-field { display:grid; gap:7px; color:var(--ink); font-weight:800; }
+  .bike-editor-field input, .bike-editor-field select { width:100%; min-width:0; height:48px; margin:0; padding:10px 13px; border:1px solid #cfcac0; border-radius:8px; background:#fff; color:var(--ink); font:inherit; font-size:16px; font-weight:600; line-height:1.2; }
+  .bike-editor-field select.bike-type-select { padding:10px 44px 10px 13px; background:#fff url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='16' height='16' viewBox='0 0 16 16'%3E%3Cpath d='m4 6 4 4 4-4' fill='none' stroke='%231d2423' stroke-width='1.8' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E") no-repeat right 14px center; background-size:16px; cursor:pointer; appearance:none; -webkit-appearance:none; }
+  .bike-editor-field select.bike-type-select:focus { outline:2px solid #9bc5b2; outline-offset:1px; border-color:var(--green); }
+  .input-with-suffix { display:flex; max-width:280px; }
+  .input-with-suffix input { border-radius:8px 0 0 8px; }
+  .input-with-suffix span { display:grid; place-items:center; min-width:55px; height:48px; padding:0 12px; border:1px solid #cfcac0; border-left:0; border-radius:0 8px 8px 0; background:#f3f1ec; color:var(--muted); }
+  .component-editor-list { display:grid; gap:10px; }
+  .component-editor-item { display:grid; grid-template-columns:40px minmax(150px,1fr) minmax(190px,.8fr); align-items:center; gap:14px; padding:15px; border:1px solid var(--line); border-radius:12px; }
+  .component-editor-icon { display:grid; place-items:center; width:40px; height:40px; border-radius:50%; background:#e6f1eb; color:var(--green); font-weight:900; }
+  .component-editor-item h3 { margin:0 0 2px; font-size:16px; }
+  .component-editor-item p { margin:0; color:var(--muted); font-size:13px; }
+  .component-id-field { font-size:13px; }
+  .component-id-field input { height:44px; }
+  .bike-editor-actions { margin-top:2px; padding:0 4px; }
+  .strava-gear-picker { display:grid; gap:13px; }
+  .strava-gear-chips { display:flex; flex-wrap:wrap; gap:9px; min-height:34px; }
+  .strava-gear-chip { display:inline-flex; align-items:center; gap:7px; padding:7px 8px 7px 11px; border-radius:999px; background:#e6f1eb; color:#1f5b46; font-size:14px; font-weight:800; }
+  .strava-gear-chip button { display:grid; place-items:center; width:20px; height:20px; padding:0; border:0; border-radius:50%; background:#fff; color:#436a5a; font-size:17px; font-weight:600; line-height:1; cursor:pointer; }
+  .strava-gear-add { display:grid; grid-template-columns:minmax(0,1fr) auto; gap:10px; }
+  .strava-gear-add select { width:100%; height:48px; padding:10px 44px 10px 13px; border:1px solid #cfcac0; border-radius:8px; background:#fff; color:var(--ink); font:inherit; font-weight:600; appearance:none; -webkit-appearance:none; }
+  .strava-gear-error { color:#9b4f18; }
+  @media (max-width:900px) { .bike-editor { grid-template-columns:1fr; } .bike-editor-media { position:static; display:grid; grid-template-columns:150px 1fr; align-items:center; gap:0 18px; text-align:left; } .bike-editor-media .field-help { grid-column:2; } }
+  @media (max-width:620px) { .bike-field-grid, .component-editor-item { grid-template-columns:1fr; } .bike-editor-card { padding:18px; } .section-heading { display:block; } .section-heading > p { margin-top:8px; } .component-editor-icon { display:none; } .component-id-field { max-width:none; } .bike-editor-media { grid-template-columns:1fr; text-align:center; } .bike-editor-media .field-help { grid-column:auto; text-align:left; } .bike-photo-frame { max-width:220px; margin:auto; width:100%; } .strava-gear-add { grid-template-columns:1fr; } }
+</style>
+<script>
+  (() => {
+    const input = document.querySelector('[data-bike-photo-input]');
+    const frame = document.querySelector('[data-bike-photo-frame]');
+    if (!input || !frame) return;
+    input.addEventListener('change', () => {
+      const file = input.files && input.files[0];
+      if (!file) return;
+      let preview = frame.querySelector('[data-bike-photo-preview]');
+      if (!preview) { preview = document.createElement('img'); preview.dataset.bikePhotoPreview = ''; frame.replaceChildren(preview); }
+      preview.src = URL.createObjectURL(file);
+      preview.alt = file.name;
+    });
+  })();
+  (() => {
+    const picker = document.querySelector('[data-strava-gear-picker]');
+    if (!picker) return;
+    const select = picker.querySelector('[data-gear-select]');
+    const chips = picker.querySelector('[data-gear-chips]');
+    const empty = picker.querySelector('[data-gear-empty]');
+    const refreshEmpty = () => { if (empty) empty.hidden = Boolean(chips.querySelector('[data-gear-chip]')); };
+    const add = () => {
+      const option = select.options[select.selectedIndex];
+      if (!option || !option.value || chips.querySelector(`[data-gear-id="${option.value}"]`)) return;
+      const chip = document.createElement('span');
+      chip.className = 'strava-gear-chip'; chip.dataset.gearChip = ''; chip.dataset.gearId = option.value;
+      const label = document.createElement('span'); label.textContent = option.dataset.label || option.textContent;
+      const remove = document.createElement('button'); remove.type = 'button'; remove.dataset.removeGear = ''; remove.setAttribute('aria-label', `Remove ${label.textContent}`); remove.textContent = '×';
+      const input = document.createElement('input'); input.type = 'hidden'; input.name = 'strava_gear_ids'; input.value = option.value;
+      chip.append(label, remove, input); chips.append(chip); option.disabled = true; select.value = ''; refreshEmpty();
+    };
+    picker.querySelector('[data-add-gear]').addEventListener('click', add);
+    select.addEventListener('change', (event) => { if (event.target.value) add(); });
+    chips.addEventListener('click', (event) => {
+      const remove = event.target.closest('[data-remove-gear]'); if (!remove) return;
+      const chip = remove.closest('[data-gear-chip]');
+      const option = select.querySelector(`option[value="${chip.dataset.gearId}"]`); if (option) option.disabled = false;
+      chip.remove(); refreshEmpty();
+    });
+  })();
+</script>
+{% endblock %}

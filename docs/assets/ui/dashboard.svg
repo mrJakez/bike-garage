@@ -1,0 +1,48 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1440" height="900" viewBox="0 0 1440 900" role="img" aria-labelledby="title desc">
+  <title id="title">Bike Garage dashboard sketch</title>
+  <desc id="desc">A desktop dashboard showing review items, bike cards, and a recent grouped ride.</desc>
+  <style>
+    .bg{fill:#f3f1ec}.shell{fill:#1d2423}.surface{fill:#fffdf9}.card{fill:#fffdf9;stroke:#dedbd3;stroke-width:1}.line{stroke:#dedbd3;stroke-width:1}.title{font:700 28px Arial,sans-serif;fill:#1d2423}.h2{font:700 17px Arial,sans-serif;fill:#1d2423}.body{font:14px Arial,sans-serif;fill:#5f625e}.small{font:12px Arial,sans-serif;fill:#7d807a}.nav{font:14px Arial,sans-serif;fill:#b8c0bc}.navon{font:700 14px Arial,sans-serif;fill:#fffdf9}.metric{font:700 25px Arial,sans-serif;fill:#1d2423}.ok{fill:#2f765b}.amber{fill:#bf7c28}.muted{fill:#aeb1aa}.pill{fill:#f6efe3}.tag{font:700 11px Arial,sans-serif;fill:#9a5d13}.white{font:700 14px Arial,sans-serif;fill:#fffdf9}.bike{stroke:#1d2423;stroke-width:4;fill:none;stroke-linecap:round;stroke-linejoin:round}
+  </style>
+  <rect class="bg" width="1440" height="900"/>
+  <rect class="shell" x="0" y="0" width="242" height="900"/>
+  <text x="34" y="54" class="white" style="font-size:21px">BIKE GARAGE</text>
+  <text x="34" y="78" class="small" fill="#9aa39f">Jakez' garage</text>
+  <rect x="18" y="122" width="206" height="42" rx="8" fill="#31413d"/>
+  <text x="42" y="148" class="navon">Dashboard</text>
+  <text x="42" y="206" class="nav">Activities</text>
+  <text x="42" y="254" class="nav">Bikes</text>
+  <text x="42" y="302" class="nav">Settings</text>
+  <line x1="28" y1="742" x2="214" y2="742" stroke="#45514e"/>
+  <circle cx="46" cy="785" r="15" fill="#c78b3c"/>
+  <text x="72" y="782" class="navon">Jakez</text><text x="72" y="802" class="small" fill="#9aa39f">2 bikes tracked</text>
+  <text x="286" y="66" class="title">Good evening, Jakez</text>
+  <text x="286" y="93" class="body">One activity needs a bike decision.</text>
+  <rect class="card" x="286" y="128" width="1110" height="95" rx="12"/>
+  <circle cx="326" cy="174" r="18" class="amber"/><text x="361" y="164" class="h2">Bike assignment needs confirmation</text><text x="361" y="188" class="body">Morning gravel ride · Tarmac candidate · 67%</text>
+  <rect x="1246" y="153" width="118" height="40" rx="7" fill="#1d2423"/><text x="1268" y="178" class="white">Review ride</text>
+  <text x="286" y="272" class="h2">Your bikes</text>
+  <rect class="card" x="286" y="294" width="530" height="242" rx="12"/>
+  <text x="312" y="329" class="h2">Tarmac</text><circle cx="381" cy="324" r="5" class="ok"/><text x="396" y="329" class="small">confirmed</text>
+  <defs><clipPath id="tarmacThumb"><circle cx="408" cy="406" r="68"/></clipPath><clipPath id="cruxThumb"><circle cx="963" cy="406" r="68"/></clipPath></defs><image href="file:///Users/jakez/pdev/bike-garage-pd/docs/assets/ui/tarmac-photo.png" x="340" y="338" width="136" height="136" preserveAspectRatio="xMidYMid slice" clip-path="url(#tarmacThumb)"/><circle cx="408" cy="406" r="68" fill="none" stroke="#dedbd3"/>
+  <text x="566" y="370" class="metric">3,914 km</text><text x="566" y="392" class="small">lifetime mileage</text>
+  <text x="566" y="434" class="body">Tracked rides</text><text x="730" y="434" class="h2">16</text>
+  <text x="566" y="467" class="body">Provider links</text><text x="730" y="467" class="body">2 linked</text>
+  <line x1="312" y1="495" x2="790" y2="495" class="line"/><text x="312" y="519" class="small">73.42 km today · 2 Strava accounts linked</text>
+  <rect class="card" x="842" y="294" width="554" height="242" rx="12"/>
+  <text x="868" y="329" class="h2">Crux</text><circle cx="923" cy="324" r="5" class="muted"/><text x="938" y="329" class="small">Conny's bike</text>
+  <image href="file:///Users/jakez/pdev/bike-garage-pd/docs/assets/ui/crux-photo.png" x="895" y="338" width="136" height="136" preserveAspectRatio="xMidYMid slice" clip-path="url(#cruxThumb)"/><circle cx="963" cy="406" r="68" fill="none" stroke="#dedbd3"/>
+  <text x="1118" y="370" class="metric">1,206 km</text><text x="1118" y="392" class="small">tracked since 12 Aug</text>
+  <text x="1118" y="434" class="body">Tracked rides</text><text x="1298" y="434" class="h2">8</text>
+  <text x="1118" y="467" class="body">Provider links</text><text x="1298" y="467" class="body">1 linked</text>
+  <line x1="868" y1="495" x2="1370" y2="495" class="line"/><text x="868" y="519" class="small">Conny's bike · no login required</text>
+  <text x="286" y="586" class="h2">Latest activity</text>
+  <rect class="card" x="286" y="608" width="1110" height="170" rx="12"/>
+  <text x="314" y="642" class="small">TODAY · 16:45–18:02</text><text x="314" y="675" class="h2">Evening loop</text><text x="314" y="700" class="body">73.42 km · Road ride · 2 recorded riders</text>
+  <rect x="632" y="638" width="116" height="26" rx="13" fill="#e8f2ed"/><text x="651" y="656" class="small" fill="#2f765b">Strava · Jakez</text>
+  <rect x="756" y="638" width="124" height="26" rx="13" fill="#e8f2ed"/><text x="773" y="656" class="small" fill="#2f765b">Strava · Conny</text>
+  <text x="632" y="697" class="body">Jakez</text><text x="704" y="697" class="h2">Tarmac</text><text x="801" y="697" class="body">73.42 km</text>
+  <text x="632" y="729" class="body">Conny</text><text x="704" y="729" class="h2">Crux</text><text x="801" y="729" class="body">73.18 km</text>
+  <rect x="1236" y="671" width="128" height="42" rx="7" fill="#f6efe3"/><text x="1254" y="697" class="tag">View activity</text>
+  <text x="286" y="836" class="small">All mileage is ledger-based · Review decisions remain auditable</text>
+</svg>

@@ -1,0 +1,47 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>{% block title %}Bike Garage{% endblock %}</title>
+    <link rel="icon" type="image/svg+xml" href="{{ url_for('static', path='bike-garage-icon.svg') }}">
+    <link rel="stylesheet" href="{{ url_for('static', path='app.css') }}?v=6">
+    <style>.notice{font-size:1.05rem;font-weight:700;border:1px solid #b9d8c8;border-left:5px solid var(--green);padding:16px 18px;border-radius:10px;box-shadow:0 2px 8px #1d242314}.notice.error{background:#fff0ed;color:#a33b2f;border-color:#e6b8b0;border-left-color:#c84d3e}.notice.success{background:#e8f2ed;color:var(--green)}</style>
+  </head>
+  <body>
+    <aside>
+      <a class="brand" href="/">BIKE GARAGE</a>
+      <p class="garage">{{ user.display_name }}' garage</p>
+      <nav>
+        <a class="{% if request.url.path == '/' %}active{% endif %}" href="/">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/></svg>
+          <span>Dashboard</span>
+        </a>
+        <a class="{% if request.url.path.startswith('/activities') or request.url.path.startswith('/provider-activities') %}active{% endif %}" href="/activities">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 3v18M19 3v18M5 7h14M5 17h14M8 11h8"/></svg>
+          <span>Activities</span>
+        </a>
+        <a class="{% if request.url.path.startswith('/bikes') %}active{% endif %}" href="/bikes">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="5.25" cy="17.25" r="3.65"/><circle cx="18.75" cy="17.25" r="3.65"/><path d="m5.25 17.25 4.5-8.65h3.65l2.05 8.65H5.25m4.5-8.65 4.05 8.65m-4.05-8.65 6.15.15 2.85 8.5m-1.75-8.45 2.05-2.2m-4.1 2.2h4.55M8.1 7.15h3.5m1.55 10.1h2.25"/></svg>
+          <span>Bikes</span>
+        </a>
+        <a class="{% if request.url.path.startswith('/providers') or request.url.path.startswith('/connections') %}active{% endif %}" href="/providers">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="6" cy="12" r="3"/><circle cx="18" cy="6" r="3"/><circle cx="18" cy="18" r="3"/><path d="m8.7 10.7 6.6-3.4M8.7 13.3l6.6 3.4"/></svg>
+          <span>Provider</span>
+        </a>
+        <a class="{% if request.url.path.startswith('/rules') %}active{% endif %}" href="/rules">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 6h16M4 12h16M4 18h16"/><circle cx="8" cy="6" r="1"/><circle cx="16" cy="12" r="1"/><circle cx="11" cy="18" r="1"/></svg>
+          <span>Rules</span>
+        </a>
+        <a class="{% if request.url.path.startswith('/settings') %}active{% endif %}" href="/settings">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .34 1.88l.06.06-2.1 2.1-.06-.06a1.7 1.7 0 0 0-1.88-.34 1.7 1.7 0 0 0-1.03 1.56v.08h-3v-.08A1.7 1.7 0 0 0 10.7 18.6a1.7 1.7 0 0 0-1.88.34l-.06.06-2.1-2.1.06-.06A1.7 1.7 0 0 0 7.06 15a1.7 1.7 0 0 0-1.56-1.03h-.08v-3h.08A1.7 1.7 0 0 0 7.06 9.94a1.7 1.7 0 0 0-.34-1.88l-.06-.06 2.1-2.1.06.06a1.7 1.7 0 0 0 1.88.34 1.7 1.7 0 0 0 1.03-1.56v-.08h3v.08A1.7 1.7 0 0 0 15.76 6.3a1.7 1.7 0 0 0 1.88-.34l.06-.06 2.1 2.1-.06.06a1.7 1.7 0 0 0-.34 1.88 1.7 1.7 0 0 0 1.56 1.03h.08v3h-.08A1.7 1.7 0 0 0 19.4 15Z"/></svg>
+          <span>Settings</span>
+        </a>
+      </nav>
+    </aside>
+    <main>
+      {% if request.query_params.get('notice') %}{% set notice = request.query_params.get('notice') %}{% set is_error = ('invalid' in notice|lower or 'required' in notice|lower or 'error' in notice|lower or 'failed' in notice|lower or 'not found' in notice|lower) %}<div class="notice {{ 'error' if is_error else 'success' }}" role="alert">{{ notice }}</div>{% endif %}
+      {% block content %}{% endblock %}
+    </main>
+  </body>
+</html>

@@ -1,0 +1,21 @@
+{% extends "base.html" %}
+{% block title %}Settings · Bike Garage{% endblock %}
+{% block content %}
+<p class="eyebrow">SETTINGS</p>
+<div class="page-heading"><div><h1>Garage start</h1><p class="lead">Choose when Bike Garage begins managing your activities and mileage.</p></div></div>
+<section class="card settings-card">
+  <h2>Managed activity period</h2>
+  <p class="field-help">Earlier imported activities stay stored, but are hidden and ignored by rules, mileage, and Strava updates. Set each bike’s starting mileage to its existing distance at this point.</p>
+  <form method="post" action="/settings/mileage">
+    <label>Garage start date<input type="datetime-local" name="garage_started_at" value="{{ mileage_settings.mileage_tracking_started_at or '' }}"></label>
+    <p class="field-help">Set this when you begin using Bike Garage; each bike’s starting mileage is its opening value.</p>
+    <button type="submit">Save Garage start</button>
+  </form>
+</section>
+{% if mileage_settings.mileage_tracking_started_at %}
+<section class="card settings-status"><strong>Garage start: {{ mileage_settings.mileage_tracking_started_at|activity_datetime }}</strong><span>Only activities from this point onward are visible and managed.</span></section>
+{% else %}
+<section class="card settings-status is-paused"><strong>Garage start is not set</strong><span>Set a start date once your baseline kilometer values are in place.</span></section>
+{% endif %}
+<style>.settings-card{max-width:720px}.settings-card h2{margin-top:0}.settings-card form{display:grid;gap:12px;margin-top:20px}.settings-card label{display:grid;gap:7px;font-weight:700}.settings-card input{max-width:340px;padding:11px 12px;border:1px solid var(--line);border-radius:8px;background:#fff;font:inherit}.settings-card button{justify-self:start}.settings-status{display:grid;gap:5px;max-width:720px;background:#e8f2ed;border-color:#b9d8c8}.settings-status strong{color:var(--green)}.settings-status span{color:var(--muted);font-size:.88rem}.settings-status.is-paused{background:#fff8ec;border-color:#e5c38e}.settings-status.is-paused strong{color:#9a621b}</style>
+{% endblock %}

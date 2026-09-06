@@ -1,0 +1,203 @@
+{% extends "base.html" %}
+{% block title %}{{ 'Edit' if editing|default(false) else 'Add' }} rule · Bike Garage{% endblock %}
+{% block content %}
+<style>
+  .rule-layout{display:block;width:100%}.form-card select { display:block; width:100%; min-height:48px; margin-top:7px; padding:10px 42px 10px 13px; border:1px solid #cfcac0; border-radius:7px; background:#fff; color:var(--ink); font:inherit; appearance:none; -webkit-appearance:none; }
+  .form-card label[hidden] { display:none !important; }
+  .rule-if{border:1px solid #cfcac0;border-radius:8px;padding:12px 14px}.rule-if legend{font-weight:700;padding:0 5px}.rule-if-row{display:grid;grid-template-columns:1.6fr .8fr 1fr;gap:8px}.rule-if-row select{margin-top:0}.rule-if-row input{margin-top:0}.rule-test-form{display:grid;gap:12px}.rule-test-form label{display:block}.rule-test-form select{display:block;width:100%;min-height:48px;margin-top:7px;padding:9px 34px 9px 11px;border:1px solid #cfcac0;border-radius:7px;background:#fff;color:var(--ink);font:inherit;appearance:none;-webkit-appearance:none}.rule-test-actions{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:8px}.rule-test-actions button{min-height:46px;margin:0;padding:10px 12px;font:inherit;font-weight:700}.rule-test-actions button:last-child{background:var(--green);border-color:var(--green);color:#fff}.rule-test-result{display:flex;align-items:center;justify-content:space-between;gap:12px;margin-top:2px;padding:10px 13px;border:1px solid #b9ddcb;border-left:5px solid var(--green);border-radius:7px;background:#edf7f1;color:var(--green);font-size:.9rem}.rule-test-result strong{font-weight:750}.rule-test-result a{color:var(--green);font-size:.84rem;font-weight:700}.test-log{padding:12px;border-radius:7px;background:#202725;color:#bfe4d1;white-space:pre-wrap;overflow:auto}@media(max-width:560px){.rule-test-actions{grid-template-columns:1fr}}
+</style>
+<div class="rule-editor-heading"><div><p class="eyebrow">RULES</p><h1>{{ 'Edit' if editing|default(false) else 'Add' }} rule</h1><p class="lead">Write and save your resolver logic here. Test runs are available in the sidebar.</p></div>{% if editing|default(false) %}<button type="button" class="rule-test-toggle" data-open-test-panel>Test rule</button>{% endif %}</div>
+{% if form_error|default(false) %}<div class="rule-form-error" role="alert"><strong>Rule was not saved</strong><span>{{ form_error }}</span></div>{% endif %}
+<div class="rule-layout"><form class="form-card rule-editor-form" method="post" action="{{ '/rules/' ~ rule.id ~ '/edit' if editing|default(false) else '/rules' }}">
+  {% if editing|default(false) %}<input type="hidden" name="priority" value="{{ rule.priority }}">{% endif %}
+  <label class="rule-name-control">Rule name<input name="name" value="{{ rule.name if editing|default(false) else '' }}" placeholder="Conny joins the ride" required></label>
+  <label>Expression
+    <div class="expression-editor" data-expression-editor>
+      <pre class="expression-highlight" aria-hidden="true"></pre>
+      <div class="expression-line-numbers" aria-hidden="true"></div>
+      <textarea id="expression-editor" rows="12" spellcheck="false" autocomplete="off">{{ rule.expression if editing|default(false) else 'activity.providerActivities.count' }}</textarea>
+      <button type="button" class="expression-fullscreen-toggle" data-toggle-expression-fullscreen aria-label="Open expression editor in fullscreen" title="Open fullscreen editor">⛶</button>
+      <div class="expression-suggestions" role="listbox"><button type="button" class="expression-suggestions-close" data-close-expression-suggestions aria-label="Close suggestions" title="Close suggestions">×</button></div>
+      <input type="hidden" name="expression" value="{{ rule.expression if editing|default(false) else 'activity.providerActivities.count' }}" required>
+    </div>
+  </label>
+  <p class="field-help"><button type="button" class="api-reference-button" data-open-api>Open Expression API reference</button></p>
+  <div class="form-actions"><div class="rule-form-links"><a href="/rules">Cancel</a>{% if editing|default(false) and form_error|default(false) %}<a href="/rules/{{ rule.id }}/edit" class="rule-reset-link">Reset to saved version</a>{% endif %}</div><button type="submit">{{ 'Save changes' if editing|default(false) else 'Create rule' }}</button></div>
+</form>
+<style>
+  .rule-editor-heading{display:flex;justify-content:space-between;align-items:flex-start;gap:24px}.rule-editor-heading .lead{margin-bottom:24px;max-width:none}.rule-test-toggle{margin-top:8px;background:var(--green)}.rule-editor-form{width:100%;gap:14px}.rule-name-control{display:grid;grid-template-columns:auto minmax(260px,540px);align-items:center;gap:14px;padding:14px 16px;border:1px solid var(--line);border-radius:12px;background:var(--paper)}.rule-name-control input{margin:0!important}.rule-editor-form>label:not(.rule-name-control){display:grid;gap:7px}.rule-editor-form>label:not(.rule-name-control)>.expression-editor{margin-top:0}.rule-form-error{display:grid;gap:3px;max-width:none;margin:0 0 20px;padding:14px 16px;border:1px solid #e6b8b0;border-left:5px solid #c84d3e;border-radius:10px;background:#fff0ed;color:#8d3027}.rule-form-error span{font-size:.88rem}.rule-form-links{display:flex;flex-wrap:wrap;gap:16px}.rule-reset-link{color:var(--green)!important;font-weight:700}.expression-editor{position:relative;border:1px solid #cfcac0;border-radius:10px;background:#202725;overflow:visible}.expression-editor textarea,.expression-highlight{margin:0;padding:20px;width:100%;min-height:calc(100vh - 360px);border:0;background:transparent;color:#f4f1ea;font:15px/1.55 ui-monospace,SFMono-Regular,Menlo,monospace;white-space:pre-wrap;word-wrap:break-word}.expression-editor textarea{position:relative;z-index:2;resize:vertical;outline:0;color:transparent;caret-color:#fff}.expression-highlight{position:absolute;inset:0;z-index:1;pointer-events:none;overflow:hidden}.expression-line-numbers{display:none}.expression-highlight .keyword{color:#c792ea;font-weight:650}.expression-highlight .literal{color:#f78c6c;font-weight:650}.expression-highlight .function{color:#f6c96d}.expression-highlight .object{color:#82aaff}.expression-highlight .property{color:#8bd5b1}.expression-highlight .local{color:#d8dee9}.expression-highlight .operator{color:#89ddff}.expression-highlight .number{color:#f39b82}.expression-highlight .string{color:#c3e88d}.expression-highlight .comment{color:#7f8a86;font-style:italic}.expression-suggestions{position:absolute;z-index:10;display:none;min-width:290px;max-width:calc(100% - 24px);padding:32px 5px 5px;background:#fffdf9;border:1px solid #cfcac0;border-radius:7px;box-shadow:0 8px 20px #0005}.expression-suggestions button{display:grid;gap:2px;width:100%;padding:8px;background:transparent;color:var(--ink);font:13px ui-monospace,SFMono-Regular,Menlo,monospace;text-align:left}.expression-suggestions-close{position:absolute;top:4px;right:5px;display:block!important;width:28px!important;height:24px;padding:0!important;border:0;border-radius:5px;color:var(--muted)!important;font:20px/1 system-ui,sans-serif!important;text-align:center!important}.expression-suggestions-close:hover{background:#eee9df!important;color:var(--ink)!important}.expression-suggestion-detail{font:12px/1.35 system-ui,sans-serif;color:var(--muted)}.expression-suggestions button:hover,.expression-suggestions button[aria-selected="true"]{background:#e8f2ed}.expression-fullscreen-toggle{position:absolute;z-index:12;top:12px;right:12px;width:36px;height:36px;padding:0;border:1px solid #6c7772;border-radius:7px;background:#2c3733;color:#f4f1ea;font-size:20px;line-height:1;cursor:pointer}.expression-fullscreen-toggle:hover{background:#385348}.expression-editor.is-fullscreen{position:fixed;z-index:100;inset:24px;margin:0;border-radius:12px;box-shadow:0 24px 70px #0009}.expression-editor.is-fullscreen textarea,.expression-editor.is-fullscreen .expression-highlight{min-height:calc(100vh - 48px);height:calc(100vh - 48px);padding:28px 28px 28px 68px;line-height:1.6}.expression-editor.is-fullscreen .expression-line-numbers{position:absolute;z-index:3;top:0;left:0;display:block;width:52px;padding:28px 10px 28px 0;border-right:1px solid #3b4843;color:#71807a;font:15px/1.6 ui-monospace,SFMono-Regular,Menlo,monospace;text-align:right;pointer-events:none;white-space:pre}.expression-editor.is-fullscreen textarea{resize:none}.expression-editor.is-fullscreen .expression-fullscreen-toggle{top:14px;right:14px;font-size:22px}.expression-editor.is-fullscreen .expression-suggestions{z-index:110}.rule-test-backdrop{position:fixed;z-index:80;inset:0;background:#1d242355;opacity:0;pointer-events:none;transition:opacity .18s}.rule-test-panel{position:fixed;z-index:90;top:0;right:0;width:min(530px,100vw);height:100dvh;margin:0;padding:30px;overflow:auto;border-radius:0;box-shadow:-16px 0 42px #1d24232b;transform:translateX(103%);transition:transform .22s ease}.rule-test-panel.is-open{transform:translateX(0)}.rule-test-backdrop.is-open{opacity:1;pointer-events:auto}.rule-test-panel-header{display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:20px}.rule-test-panel-header h2{margin:0;font-size:1.35rem}.rule-test-panel-close{padding:3px 10px;background:transparent;color:var(--muted);font-size:1.8rem;line-height:1}.rule-test-panel h3{margin:26px 0 10px;font-size:1rem}.rule-test-panel .test-log{min-height:180px;font-size:.88rem;line-height:1.55}@media(max-width:650px){.rule-editor-heading{display:block}.rule-test-toggle{margin:0 0 18px}.rule-name-control{grid-template-columns:1fr;gap:6px}.expression-editor textarea,.expression-highlight{min-height:calc(100vh - 410px)}.expression-editor.is-fullscreen{inset:10px}.expression-editor.is-fullscreen textarea,.expression-editor.is-fullscreen .expression-highlight{min-height:calc(100vh - 20px);height:calc(100vh - 20px);padding:18px 18px 18px 58px}.expression-editor.is-fullscreen .expression-line-numbers{width:44px;padding:18px 8px 18px 0}.rule-test-panel{width:min(100vw,530px);padding:24px 20px}}
+</style>
+<script>
+  (() => { const root=document.querySelector('[data-expression-editor]'), editor=root.querySelector('textarea'), highlight=root.querySelector('.expression-highlight'), hidden=root.querySelector('input[type=hidden]'), suggestions=root.querySelector('.expression-suggestions'), fullscreenButton=root.querySelector('[data-toggle-expression-fullscreen]'), lineNumbers=root.querySelector('.expression-line-numbers');
+    const tokens=['activity','providerActivities','count','filter','hardware','append','provider_activity_count','hammerhead_activity_count','max','min','coalesce'];
+    const bikeCatalog=[{% for bike in bikes if bike.identifier %}{identifier:{{ bike.identifier|tojson }},name:{{ bike.name|tojson }}},{% endfor %}];
+    const connectionCatalog=[{% for connection in connections if connection.identifier %}{provider:{{ connection.provider_type|tojson }},identifier:{{ connection.identifier|tojson }},account:{{ connection.external_account_id|tojson }},name:{{ connection.display_name|tojson }}},{% endfor %}];
+    const completionDescriptions={activity:'The canonical activity currently being resolved.',bikes:'Garage bike catalog; find a bike by identifier or component ANT+ ID.',providerActivities:'Linked source activities for this activity.',count:'Number of items in this collection.',append:'Adds a value to this rule list.',filter:'Filter provider activities by provider, local connection identifier, or provider account.',hardware:'Returns a FIT hardware observation for a component type, such as shifting.',antDeviceNumber:'ANT+ device number observed in the FIT file.',first:'First matching provider activity, or an empty object.',title:'Activity title.',provider:'Provider identifier, for example STRAVA_PROXY.',connection:'Stable local provider connection identifier.',account:'Provider-owned account identifier.',sportType:'Sport or activity type.',distance:'Distance in metres.',startedAt:'Start timestamp.',json:'Complete provider activity as JSON.',bikeCount:'Required number of bike slots.',find:'Finds one item by stable bike identifier or matching ANT+ component ID.',max:'Returns the greater of two values.',min:'Returns the smaller of two values.',coalesce:'Returns the first non-empty value.'};
+    const escape=(s)=>s.replace(/[&<>]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;'}[c]));
+    const paintLineNumbers=()=>{if(!lineNumbers)return;const count=editor.value.split('\n').length;lineNumbers.textContent=Array.from({length:count},(_,index)=>String(index+1)).join('\n');lineNumbers.style.transform=`translateY(${-editor.scrollTop}px)`;};
+    const paint=()=>{let s=escape(editor.value),stash=[];const hold=(kind,value)=>{const key=String.fromCharCode(0xE000+stash.length);stash.push({kind,value});return key};const locals=new Set([...editor.value.matchAll(/\b(?:let|var)\s+([A-Za-z_]\w*)/g)].map(match=>match[1]));s=s.replace(/"(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*'/g,value=>hold('string',value));s=s.replace(/\/\/[^\n]*/g,value=>hold('comment',value));const pattern=/\b(let|var|if|else|return)\b|\b(true|false|null)\b|\b(print|max|min|coalesce|filter|find|hardware|append)\b|\b(activity|bikes|providerActivities)\b|\b(count|first|title|provider|connection|account|sportType|distance|startedAt|bikeCount|json|identifier|name|id|antDeviceNumber|componentType|manufacturer|serialNumber)\b|\b\d+(?:\.\d+)?\b|===|!==|==|!=|>=|<=|&&|\|\||[=+\-*\/<>]/g;s=s.replace(pattern,value=>{let kind=locals.has(value)?'local':/^(let|var|if|else|return)$/.test(value)?'keyword':/^(true|false|null)$/.test(value)?'literal':/^(print|max|min|coalesce|filter|find|hardware|append)$/.test(value)?'function':/^(activity|bikes|providerActivities)$/.test(value)?'object':/^(count|first|title|provider|connection|account|sportType|distance|startedAt|bikeCount|json|identifier|name|id|antDeviceNumber|componentType|manufacturer|serialNumber)$/.test(value)?'property':/^\d/.test(value)?'number':/^(===|!==|==|!=|>=|<=|&&|\|\||[=+\-*\/<>])$/.test(value)?'operator':'local';return hold(kind,value)});s=s.replace(/[\uE000-\uF8FF]/g,marker=>{const token=stash[marker.charCodeAt(0)-0xE000];return `<span class="${token.kind}">${token.value}</span>`});highlight.innerHTML=s+'\n';hidden.value=editor.value;highlight.scrollTop=editor.scrollTop;highlight.scrollLeft=editor.scrollLeft;paintLineNumbers();};
+    let suggestionIndex=-1;
+    const updateSuggestions=()=>{
+      paint();
+      const cursor=editor.selectionStart;
+      const before=editor.value.slice(0,cursor);
+      const tokenMatch=before.match(/[A-Za-z_]+$/);
+      const typed=tokenMatch?tokenMatch[0]:'';
+      const prefix=tokenMatch?before.slice(0,-typed.length):before;
+      const declarations=[...before.matchAll(/\b(let|var)\s+([A-Za-z_]\w*)\s*=\s*(.*)$/gm)];
+      const localVariables=declarations.map(match=>match[2]);
+      const localFunctions=[...before.matchAll(/\b(?:function|def)\s+([A-Za-z_]\w*)\s*\(/g)].map(match=>match[1]);
+      const listVariables=declarations.filter(match=>/^\[\s*\]/.test(match[3])).map(match=>match[2]);
+      const localObjectMatch=prefix.match(/(?:^|[\s,(])([A-Za-z_]\w*)\.$/);
+      // Keep suggestions contextual even while typing function arguments, e.g.
+      // filter(pro… or filter(provider="…", ac… .
+      const filterContext=/\.filter\([^)]*$/.test(before);
+      const providerFindContext=/\.providerActivities\.find\([^)]*$/.test(before);
+      // Only inspect the filter call currently under the cursor. Looking at
+      // the entire expression caused a prior Strava filter to hide the
+      // Hammerhead connection from a later filter's suggestions.
+      const activeLookupStart=Math.max(before.lastIndexOf('.filter('), before.lastIndexOf('.providerActivities.find('));
+      const activeLookup=before.slice(activeLookupStart);
+      const providerValueMatch=activeLookup.match(/\bprovider\s*=\s*["']([^"']*)$/);
+      const connectionValueMatch=activeLookup.match(/\bconnection\s*=\s*["']([^"']*)$/);
+      const accountValueMatch=activeLookup.match(/\baccount\s*=\s*["']([^"']*)$/);
+      const selectedProvider=(activeLookup.match(/\bprovider\s*=\s*["']([^"']*)["']/)||[])[1];
+      const valueMatch=providerValueMatch||connectionValueMatch||accountValueMatch;
+      const valueScope=providerValueMatch?'filter-provider-value.':connectionValueMatch?'filter-connection-value.':accountValueMatch?'filter-account-value.':'';
+      let scope=valueScope|| (prefix.endsWith('providerActivities.first.')?'first.':
+        prefix.endsWith('providerActivities.')?'providerActivities.':
+        prefix.endsWith('activity.')?'activity.':
+        prefix.endsWith('bikes.')?'bikes.':
+        (localObjectMatch && listVariables.includes(localObjectMatch[1]))?'list.':
+        (localObjectMatch && localVariables.includes(localObjectMatch[1]))?'object.':
+        providerFindContext?'provider-find.':filterContext?'filter.':'');
+      const rootCompletion=!scope&&typed.length>=3&&['activity','bikes',...localFunctions].some(value=>value.toLowerCase().startsWith(typed.toLowerCase()));
+      if(rootCompletion)scope='root.';
+      // Do not interrupt ordinary typing. Suggestions are only useful once
+      // the user has entered an API context (a member access or lookup).
+      if(!scope){suggestions.style.display='none';return;}
+      const bikeFindSuggestions=['find(identifier="")',...bikeCatalog.map(bike=>`find(identifier="${bike.identifier}")`)];
+      const providerSuggestions=[...new Set(connectionCatalog.map(connection=>connection.provider))];
+      const connectionSuggestions=connectionCatalog.filter(connection=>!selectedProvider||connection.provider===selectedProvider);
+      const connectionFilterSuggestions=connectionSuggestions.map(connection=>`connection="${connection.identifier}"`);
+      const accountSuggestions=connectionCatalog.filter(connection=>!selectedProvider||connection.provider===selectedProvider);
+      const pool=scope==='activity.'?['providerActivities','title','sportType','distance','startedAt','bikeCount','bikes']:
+        scope==='root.'?['activity','bikes',...localFunctions]:
+        scope==='bikes.'?[...bikeFindSuggestions,'find(antDeviceNumber=)']:
+        scope==='providerActivities.'?['count','filter','find(connection="")','first']:
+        scope==='first.'?['title','provider','connection','account','sportType','distance','startedAt','json','hardware("shifting")']:
+        scope==='list.'?['append(value)','count']:
+        scope==='object.'?['title','provider','connection','account','sportType','distance','startedAt','json','hardware("shifting")']:
+        scope==='filter-provider-value.'?providerSuggestions:
+        scope==='filter-connection-value.'?connectionSuggestions.map(connection=>connection.identifier):
+        scope==='filter-account-value.'?accountSuggestions.map(connection=>connection.account):
+        scope==='provider-find.'?[...connectionFilterSuggestions,'connection','provider','account']:
+        scope==='filter.'?[...connectionFilterSuggestions,'connection','provider','account']:
+        ['activity','bikes','coalesce',...localVariables];
+      const q=(valueMatch?valueMatch[1]:typed).toLowerCase();
+      const replaceStart=valueMatch?cursor-valueMatch[1].length:cursor-typed.length;
+      const snippets=q && ('if'.startsWith(q)||q==='if')?['if condition:\n    return true\nelse:\n    return null']:q && ('else'.startsWith(q)||q==='else')?['else:\n    return null']:[];
+      const hits=[...pool.filter(t=>t.toLowerCase().startsWith(q)&&t!==q),...snippets];
+      suggestions.innerHTML=`<button type="button" class="expression-suggestions-close" data-close-expression-suggestions aria-label="Close suggestions" title="Close suggestions">×</button>`+hits.map((t,i)=>{const isBikeFind=t.startsWith('find(identifier="'),isProviderFind=t==='find(connection="")',isAppend=t==='append(value)',isConnectionFilter=t.startsWith('connection="'),isValue=scope==='filter-provider-value.'||scope==='filter-connection-value.'||scope==='filter-account-value.';const insert=isValue?`${t}"`:isBikeFind||isProviderFind?t:isAppend?'append()':t;const key=isBikeFind||isProviderFind?'find':isAppend?'append':t;const bike= isBikeFind ? bikeCatalog.find(item=>t===`find(identifier="${item.identifier}")`) : null;const connection=(isValue||isConnectionFilter)?connectionCatalog.find(item=>scope==='filter-provider-value.'?item.provider===t:scope==='filter-connection-value.'?item.identifier===t:scope==='filter-account-value.'?item.account===t:item.identifier===t.slice(12,-1)):null;const detail=bike?`Find “${bike.name}” (${bike.identifier}).`:connection?(scope==='filter-provider-value.'?`Provider used by ${connection.name}.`:scope==='filter-account-value.'?`Provider account identifier for ${connection.name} (${connection.provider}).`:`Local connection ID for ${connection.name} (${connection.provider}).`):completionDescriptions[key]||'Local variable defined in this expression.';return `<button type="button" aria-selected="${i===0}" data-token="${encodeURIComponent(insert)}" data-replace-start="${replaceStart}" data-caret-offset="${t==='find(identifier="")'||isProviderFind?2:isAppend?1:0}"><span>${escape(t)}</span><span class="expression-suggestion-detail">${escape(detail)}</span></button>`}).join('');
+      suggestionIndex=hits.length?0:-1;
+      if(!hits.length){suggestions.style.display='none';return;}
+      // Position the popup at the current caret (Safari has no native textarea popup API).
+      const style=getComputedStyle(editor), lineHeight=parseFloat(style.lineHeight)||22, fontSize=parseFloat(style.fontSize)||15;
+      const lineStart=before.lastIndexOf('\n')+1, column=before.slice(lineStart).length;
+      const line=(before.slice(0,lineStart).match(/\n/g)||[]).length;
+      const charWidth=fontSize*.62;
+      suggestions.style.left=`${Math.max(8,16+column*charWidth-editor.scrollLeft)}px`;
+      suggestions.style.top=`${Math.max(8,16+line*lineHeight-editor.scrollTop+lineHeight)}px`;
+      suggestions.style.display='block';
+    };
+    editor.addEventListener('input',updateSuggestions);
+    const toggleFullscreen=()=>{const expanded=root.classList.toggle('is-fullscreen');fullscreenButton.textContent=expanded?'×':'⛶';fullscreenButton.setAttribute('aria-label',expanded?'Close fullscreen editor':'Open expression editor in fullscreen');fullscreenButton.title=expanded?'Close fullscreen editor (Esc)':'Open fullscreen editor';document.body.classList.toggle('expression-editor-open',expanded);editor.focus();paint();};
+    fullscreenButton.addEventListener('click',toggleFullscreen);
+    editor.addEventListener('dblclick',event=>{
+      // Safari can treat a complete member chain (for example
+      // `stravaActivities.append`) as one word. Resolve the character under
+      // the pointer and select only its identifier segment instead.
+      const selected=editor.value.slice(editor.selectionStart,editor.selectionEnd);
+      if(!selected.includes('.'))return;
+      const style=getComputedStyle(editor),rect=editor.getBoundingClientRect();
+      const lineHeight=parseFloat(style.lineHeight)||22, fontSize=parseFloat(style.fontSize)||15;
+      const paddingLeft=parseFloat(style.paddingLeft)||16, paddingTop=parseFloat(style.paddingTop)||16;
+      const visualLine=Math.max(0,Math.floor((event.clientY-rect.top-paddingTop+editor.scrollTop)/lineHeight));
+      const lines=editor.value.split('\n');
+      const line=Math.min(visualLine,lines.length-1);
+      const lineStart=lines.slice(0,line).reduce((offset,value)=>offset+value.length+1,0);
+      const column=Math.max(0,Math.floor((event.clientX-rect.left-paddingLeft+editor.scrollLeft)/(fontSize*.62)));
+      let cursor=Math.min(lineStart+column,lineStart+lines[line].length);
+      if(!/[A-Za-z0-9_]/.test(editor.value[cursor]||'')&&cursor>lineStart)cursor--;
+      if(!/[A-Za-z0-9_]/.test(editor.value[cursor]||''))return;
+      let from=cursor,to=cursor+1;
+      while(from>0&&/[A-Za-z0-9_]/.test(editor.value[from-1]))from--;
+      while(to<editor.value.length&&/[A-Za-z0-9_]/.test(editor.value[to]))to++;
+      editor.setSelectionRange(from,to);
+    });
+    editor.addEventListener('keydown',e=>{
+      if(e.key==='Escape'&&suggestions.style.display==='block'){e.preventDefault();suggestions.style.display='none';suggestionIndex=-1;return;}
+      if(e.key==='Escape'&&root.classList.contains('is-fullscreen')){e.preventDefault();toggleFullscreen();return;}
+      if(e.key==='Tab'&&suggestions.style.display!=='block'){
+        e.preventDefault(); editor.setRangeText('    ',editor.selectionStart,editor.selectionEnd,'end'); editor.dispatchEvent(new Event('input')); return;
+      }
+      if(suggestions.style.display!=='block')return;
+      const items=[...suggestions.querySelectorAll('[data-token]')];
+      if(e.key==='ArrowDown'||e.key==='ArrowUp'){
+        e.preventDefault(); suggestionIndex=(suggestionIndex+(e.key==='ArrowDown'?1:-1)+items.length)%items.length;
+        items.forEach((item,i)=>item.setAttribute('aria-selected',i===suggestionIndex));
+      } else if((e.key==='Enter'||e.key==='Tab')&&suggestionIndex>=0){
+        e.preventDefault(); items[suggestionIndex].click();
+      } else if(e.key==='Escape'){suggestions.style.display='none';suggestionIndex=-1;}
+    });
+    suggestions.addEventListener('click',e=>{if(e.target.closest('[data-close-expression-suggestions]')){suggestions.style.display='none';editor.focus();return;}const b=e.target.closest('[data-token]');if(!b)return;const start=editor.selectionStart,from=Number(b.dataset.replaceStart),token=decodeURIComponent(b.dataset.token),caretOffset=Number(b.dataset.caretOffset||0);editor.setRangeText(token,from,start,'end');if(caretOffset){const caret=editor.selectionStart-caretOffset;editor.setSelectionRange(caret,caret)}suggestions.style.display='none';editor.dispatchEvent(new Event('input'));editor.focus();});editor.addEventListener('scroll',paint);paint(); })();
+</script>
+{% if editing|default(false) %}<div class="rule-test-backdrop{% if test_result is defined %} is-open{% endif %}" data-test-backdrop></div><section class="card rule-test-panel{% if test_result is defined %} is-open{% endif %}" data-test-panel aria-hidden="{{ 'false' if test_result is defined else 'true' }}"><div class="rule-test-panel-header"><div><p class="eyebrow">RULE TEST</p><h2>Test rule</h2></div><button type="button" class="rule-test-panel-close" data-close-test-panel aria-label="Close test sidebar">×</button></div><form class="rule-test-form" method="post" action="/rules/{{ rule.id }}/test-inline"><label>Activity<select name="activity_id" required>{% for activity in activities %}<option value="{{ activity.id }}"{% if selected_activity|default('')|string == activity.id|string %} selected{% endif %}>{{ activity.name }} · {{ activity.started_at|activity_datetime }}</option>{% endfor %}</select></label><div class="rule-test-actions"><button type="submit" name="mode" value="preview" class="test-button">Save and test rule</button><button type="submit" name="mode" value="apply">Save and run on activity</button></div></form>{% if test_result is defined %}<div class="rule-test-result{% if test_applied|default(false) %} is-applied{% endif %}"><strong>{% if test_applied|default(false) %}Rule applied{% else %}Preview result{% endif %}: {{ 'null' if test_result is none else test_result }}</strong>{% if selected_activity_public_id|default('') %}<a href="/activities/{{ selected_activity_public_id }}">Open activity →</a>{% endif %}</div>{% if test_logs %}<h3>Log output</h3><pre class="test-log">{{ test_logs|join('\n') }}</pre>{% endif %}{% endif %}</section>{% endif %}</div>
+<script>
+  (()=>{const testForm=document.querySelector('.rule-test-form'), mainForm=document.querySelector('.rule-editor-form'),panel=document.querySelector('[data-test-panel]'),backdrop=document.querySelector('[data-test-backdrop]'),open=document.querySelector('[data-open-test-panel]'),close=document.querySelector('[data-close-test-panel]');const setOpen=(value)=>{if(!panel)return;panel.classList.toggle('is-open',value);backdrop?.classList.toggle('is-open',value);panel.setAttribute('aria-hidden',String(!value));};open?.addEventListener('click',()=>setOpen(true));close?.addEventListener('click',()=>setOpen(false));backdrop?.addEventListener('click',()=>setOpen(false));document.addEventListener('keydown',event=>{if(event.key==='Escape'&&panel?.classList.contains('is-open'))setOpen(false)});if(!testForm||!mainForm)return;testForm.addEventListener('submit',()=>{testForm.querySelectorAll('[data-editor-copy]').forEach(node=>node.remove());['name','expression'].forEach(name=>{const source=mainForm.querySelector(`[name="${name}"]`);if(!source)return;const hidden=document.createElement('input');hidden.type='hidden';hidden.name=name;hidden.value=source.value;hidden.dataset.editorCopy='';testForm.appendChild(hidden);});});})();
+</script>
+<div class="api-overlay" data-api-overlay hidden><div class="api-dialog"><button type="button" class="api-close" data-close-api aria-label="Close API reference">×</button><p class="eyebrow">RULE EXPRESSION API</p><h2>Developer reference</h2><p class="field-help">Read the available objects and statements below. Insert buttons add a ready-to-edit snippet at the current cursor.</p><h3>Legacy quick links</h3><div class="api-reference-list"><button type="button" data-insert-expression="activity.providerActivities.count"><code>activity.providerActivities.count</code><span>Number of linked provider activities</span></button></div></div></div><style>.api-reference-button{border:0;background:transparent;color:var(--green);padding:0;text-decoration:underline;font:inherit;font-weight:700;cursor:pointer}.api-overlay{position:fixed;inset:0;z-index:20;display:grid;place-items:center;padding:24px;background:#1d242399}.api-overlay[hidden]{display:none!important}.api-dialog{position:relative;width:min(960px,100%);max-height:88vh;overflow:auto;padding:34px;background:var(--paper);border-radius:14px;box-shadow:0 24px 70px #0004}.api-close{position:absolute;right:16px;top:10px;border:0;background:transparent;color:var(--muted);font-size:2rem}.api-reference-list{display:grid;gap:8px;margin-top:12px}.api-reference-list button{display:grid;gap:3px;padding:12px 14px;border:1px solid var(--line);border-radius:8px;background:#fff;text-align:left;color:var(--ink);cursor:pointer}.api-reference-list button:hover{border-color:var(--green);background:#e8f2ed}.api-reference-list span{font-size:.85rem;color:var(--muted)}</style><script>(()=>{const o=document.querySelector('[data-api-overlay]');document.querySelector('[data-open-api]').onclick=()=>o.hidden=false;document.querySelector('[data-close-api]').onclick=()=>o.hidden=true;o.addEventListener('click',e=>{if(e.target===o)o.hidden=true});o.querySelectorAll('[data-insert-expression]').forEach(b=>b.onclick=()=>{const e=document.getElementById('expression-editor');e.setRangeText(b.dataset.insertExpression,e.selectionStart,e.selectionEnd,'end');e.dispatchEvent(new Event('input'));o.hidden=true;e.focus()})})();</script>
+<script>
+  (() => {
+    const dialog=document.querySelector('[data-api-overlay] .api-dialog');
+    if(!dialog)return;
+    dialog.querySelectorAll('.api-reference-list').forEach(list=>list.hidden=true);
+    dialog.querySelectorAll('h3').forEach(heading=>heading.hidden=true);
+    const docs=document.createElement('div');
+    docs.className='api-docs';
+    docs.innerHTML=`
+      <section class="api-intro"><h3>Expression language</h3><p>Rules run from top to bottom for one canonical activity. A rule may read activity data, write bike assignments, log values during a test, then return a result.</p><p><code>return false</code> or <code>return null</code> continues with the next rule. <code>return true</code> applies the rule with the linked-provider-activity count. Returning a number uses that number as the result.</p></section>
+      <section><h3><code>activity</code> — canonical activity</h3><p>Read the unified activity produced from one or more provider activities.</p><dl class="api-properties"><dt><code>activity.title</code></dt><dd>Canonical activity title.</dd><dt><code>activity.sportType</code></dt><dd>Canonical sport or activity type.</dd><dt><code>activity.distance</code></dt><dd>Canonical distance in metres.</dd><dt><code>activity.startedAt</code></dt><dd>Canonical start timestamp.</dd><dt><code>activity.providerActivities</code></dt><dd>Collection of linked provider activities.</dd></dl></section>
+      <section><h3><code>activity.providerActivities</code> — source collection</h3><dl class="api-properties"><dt><code>.count</code></dt><dd>Number of linked provider activities.</dd><dt><code>.first</code></dt><dd>First provider activity, or an empty object if none exists.</dd><dt><code>.filter(provider=..., connection=..., account=...)</code></dt><dd>Returns a collection, except <code>connection=...</code>: as connection identifiers are unique, this directly returns one ProviderActivity (or an empty one).</dd><dt><code>.find(connection=...)</code></dt><dd>Explicit alternative that returns the single provider activity, or <code>null</code> when that connection is not linked.</dd></dl><pre class="api-example"><code>let dennis = activity.providerActivities.filter(
+  connection="dennis-strava"
+)
+print(dennis.title)</code></pre><button type="button" class="api-insert" data-insert-expression="activity.providerActivities.find(connection=&quot;&quot;)">Insert provider lookup</button></section>
+      <section><h3><code>ProviderActivity</code> — provider record</h3><p>Available from <code>.first</code> or an indexed list item.</p><dl class="api-properties"><dt><code>.title</code></dt><dd>Provider-specific activity title.</dd><dt><code>.provider</code></dt><dd>Provider identifier, such as <code>STRAVA_PROXY</code> or <code>HAMMERHEAD</code>.</dd><dt><code>.connection</code></dt><dd>Stable local provider connection identifier; use this for rule filters.</dd><dt><code>.account</code></dt><dd>Provider-owned account identifier.</dd><dt><code>.sportType</code></dt><dd>Provider-specific sport type.</dd><dt><code>.distance</code></dt><dd>Provider-specific distance in metres.</dd><dt><code>.startedAt</code></dt><dd>Provider start timestamp.</dd><dt><code>.json</code></dt><dd>Complete provider record as JSON for test logging.</dd></dl></section>
+      <section><h3><code>bikes</code> and <code>Bike</code></h3><p><code>bikes</code> is the garage catalog. Look up an individual bike with its stable identifier.</p><dl class="api-properties"><dt><code>bikes.find(identifier="crux")</code></dt><dd>Returns the matching Bike object, or <code>null</code> when no bike has that identifier.</dd><dt><code>bike.id</code></dt><dd>Internal Bike Garage ID.</dd><dt><code>bike.identifier</code></dt><dd>Stable rule-facing bike identifier.</dd><dt><code>bike.name</code></dt><dd>Bike display name.</dd><dt><code>bike.json</code></dt><dd>Complete bike record as JSON.</dd></dl><pre class="api-example"><code>let crux = bikes.find(identifier="crux")
+print(crux) // full Bike JSON in the test log</code></pre><button type="button" class="api-insert" data-insert-expression="bikes.find(identifier=&quot;&quot;)">Insert bike lookup</button></section>
+      <section><h3>Writing activity fields</h3><p>Rules can set the title, number of required bike slots, and bikes assigned to those slots.</p><dl class="api-properties"><dt><code>activity.title = value</code></dt><dd>Sets the canonical activity title. A manually edited title remains an override.</dd><dt><code>activity.bikeCount = 2</code></dt><dd>Sets the required number of bike slots.</dd><dt><code>activity.bikes = [bikeA, bikeB]</code></dt><dd>Sets all assigned slots at once, in slot order.</dd><dt><code>activity.bikes[0] = bike</code></dt><dd>Sets one zero-based slot.</dd></dl><pre class="api-example"><code>activity.bikeCount = 2
+activity.bikes = [
+  bikes.find(identifier="tarmac"),
+  bikes.find(identifier="crux")
+]</code></pre><button type="button" class="api-insert" data-insert-expression="activity.bikeCount = 2\nactivity.bikes = [bikes.find(identifier=&quot;tarmac&quot;), bikes.find(identifier=&quot;crux&quot;)]">Insert assignment example</button></section>
+      <section><h3>Statements and built-in functions</h3><dl class="api-properties"><dt><code>let name = value</code> / <code>var name = []</code></dt><dd>Declare a local variable or list.</dd><dt><code>function name(parameter) { … }</code></dt><dd>Declare a reusable helper. Functions may use <code>if</code>, local variables, <code>print</code>, and <code>return</code>. Colon syntax is supported too.</dd><dt><code>list.append(value)</code></dt><dd>Add an item to a declared list.</dd><dt><code>list.count</code></dt><dd>Number of values currently held by a declared list.</dd><dt><code>coalesce(a, b, ...)</code></dt><dd>Returns the first non-empty value; useful for provider fallbacks.</dd><dt><code>if</code> / <code>else if</code> / <code>else</code></dt><dd>Conditional execution; colon and brace syntax are accepted.</dd><dt><code>print(value, ...)</code></dt><dd>Writes values to the Test rule log.</dd><dt><code>max(a, b)</code> / <code>min(a, b)</code></dt><dd>Numeric helpers.</dd><dt><code>// comment</code></dt><dd>Line comment; ignored by the evaluator.</dd></dl><pre class="api-example"><code>function bikeFromHammerhead(source) {
+  if source == null:
+    return null
+  let shifting = source.hardware("shifting")
+  return bikes.find(antDeviceNumber=shifting.antDeviceNumber)
+}
+
+let relatedBike = bikeFromHammerhead(dennisHammerhead)
+
+if activity.providerActivities.count > 1:
+  activity.bikeCount = 2
+  return true
+else:
+  return false</code></pre></section>`;
+    dialog.appendChild(docs);
+    dialog.addEventListener('click',event=>{const button=event.target.closest('.api-insert');if(!button)return;const editor=document.getElementById('expression-editor');editor.setRangeText(button.dataset.insertExpression,editor.selectionStart,editor.selectionEnd,'end');editor.dispatchEvent(new Event('input'));dialog.closest('[data-api-overlay]').hidden=true;editor.focus();});
+  })();
+</script>
+<style>.api-reference-list[hidden]{display:none!important}.api-docs{display:grid;gap:26px;margin-top:24px}.api-docs section{border-top:1px solid var(--line);padding-top:20px}.api-docs .api-intro{border-top:0;padding-top:0}.api-docs h3{margin:0 0 9px;font-size:1.08rem}.api-docs p{margin:7px 0;color:var(--muted);line-height:1.55}.api-properties{display:grid;grid-template-columns:minmax(250px,1fr) minmax(0,1.45fr);gap:9px 24px;margin:14px 0 0}.api-properties dt{font-weight:700}.api-properties dd{margin:0;color:var(--muted);line-height:1.45}.api-example{margin:16px 0 0;padding:14px 16px;border:1px solid #32443d;border-radius:8px;background:#202725;color:#dfece5;white-space:pre-wrap;overflow:auto;line-height:1.5}.api-insert{margin-top:12px;background:var(--green);font-size:.84rem}@media(max-width:650px){.api-dialog{padding:24px 18px}.api-properties{grid-template-columns:1fr;gap:3px}.api-properties dd{margin-bottom:10px}}</style>
+<style>.expression-highlight .comment{color:#7f8a86;font-style:italic}</style>
+{% endblock %}

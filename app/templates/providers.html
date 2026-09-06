@@ -1,0 +1,51 @@
+{% extends "base.html" %}
+{% block title %}Provider connections · Bike Garage{% endblock %}
+{% block content %}
+{% if tested_connection %}
+<div class="modal-backdrop" role="dialog" aria-modal="true" aria-labelledby="test-result-title">
+  <div class="test-modal">
+    <a class="modal-close" href="/providers" aria-label="Close">×</a>
+    {% if tested_connection.last_test_status == 'SUCCESS' %}
+    <p class="eyebrow">CONNECTION TEST</p>
+    <h2 id="test-result-title">Connected to {{ providers[tested_connection.provider_type].name }}</h2>
+    <p class="modal-summary">{{ tested_connection.last_test_message }}</p>
+    {% if tested_connection.last_test_activities %}
+    <h3>Latest activities returned</h3>
+    <ol class="modal-activities">{% for activity in tested_connection.last_test_activities %}<li><strong>{{ activity.name }}</strong><span>{{ activity.date }} · {{ activity.distance }}</span></li>{% endfor %}</ol>
+    {% endif %}
+    {% else %}
+    <p class="eyebrow">CONNECTION TEST</p>
+    <h2 id="test-result-title">Connection test failed</h2>
+    <p class="modal-summary failed">{{ tested_connection.last_test_message or 'No test result available.' }}</p>
+    {% endif %}
+    <a class="button" href="/providers">Done</a>
+  </div>
+</div>
+{% endif %}
+<p class="eyebrow">SETTINGS</p>
+<h1>Provider connections</h1>
+<p class="lead">Connect a source account for every rider whose activities should appear in Bike Garage.</p>
+<div class="provider-grid">
+  {% for key, provider in providers.items() %}
+  <section class="card provider-card">
+    <img class="provider-icon" src="{{ url_for('static', path='provider-' ~ provider.icon ~ '.svg') }}" alt="{{ provider.name }}">
+    <h2>{{ provider.name }}</h2>
+    <p>{{ provider.description }}</p>
+    <a class="button secondary" href="/providers/{{ key }}/connect">Connect {{ provider.name }}</a>
+  </section>
+  {% endfor %}
+</div>
+<h2 class="section-title">Saved connections</h2>
+{% if connections %}
+  <div class="connections">
+  {% for item in connections %}
+    <div class="connection-row">
+      <div class="connection-provider"><img class="provider-mark provider-mark-connection" src="{{ url_for('static', path='provider-' ~ providers[item.provider_type].icon ~ '.svg') }}" alt="{{ providers[item.provider_type].name }}"><div><strong>{{ providers[item.provider_type].name }} · {{ item.display_name }}</strong><span>Connection ID: <code>{{ item.identifier }}</code>{% if item.external_account_id %} · Provider account: {{ item.external_account_id }}{% endif %}</span></div></div>
+      <div class="connection-actions"><span class="status {{ item.status|lower }}">{{ item.status.replace('_', ' ') }}</span><div class="connection-buttons"><a class="test-button" href="/connections/{{ item.id }}/edit">Edit</a><form method="post" action="/connections/{{ item.id }}/test"><button class="test-button" type="submit">Test connection</button></form><form method="post" action="/connections/{{ item.id }}/delete" onsubmit="return confirm('Delete this provider connection and its imported activities? Activities also linked to another provider will be kept.');"><button class="test-button danger-outline" type="submit">Delete</button></form></div></div>
+    </div>
+  {% endfor %}
+  </div>
+{% else %}
+  <p class="empty">No provider connection yet.</p>
+{% endif %}
+{% endblock %}

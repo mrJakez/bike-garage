@@ -1,0 +1,1 @@
+"""Bike Garage application package."""

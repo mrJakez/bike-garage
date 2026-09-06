@@ -1,0 +1,84 @@
+{% extends "base.html" %}
+{% block title %}{{ source.name }} · Provider activity · Bike Garage{% endblock %}
+{% block content %}
+<style>
+  .provider-detail-grid{display:grid;grid-template-columns:minmax(0,1.1fr) minmax(320px,.9fr);gap:18px;align-items:start}
+  .provider-breadcrumb a{color:var(--green);text-decoration:none}.provider-breadcrumb a:hover{text-decoration:underline}
+  .provider-meta{display:grid;gap:0;margin:0}.provider-meta div{display:grid;grid-template-columns:minmax(130px,.7fr) 1.3fr;gap:14px;padding:11px 0;border-bottom:1px solid var(--line)}.strava-activity-link{display:inline-flex;align-items:center;gap:7px;color:var(--green);font-weight:750;text-decoration:none}.strava-activity-link:hover{text-decoration:underline}.strava-activity-link::after{content:'↗';font-size:.9em}.strava-gear-name{display:block}.strava-gear-name code{font-size:.78rem;color:var(--muted)}.strava-gear-match{display:inline-flex;margin-top:5px;padding:4px 8px;border-radius:999px;background:#e5f2ea;color:#286b50;font-size:.78rem;font-weight:750}.strava-gear-unmatched{display:inline-flex;margin-top:5px;padding:4px 8px;border-radius:999px;background:#fff3df;color:#9a5c0e;font-size:.78rem;font-weight:750}
+  .provider-meta div:last-child{border-bottom:0}.provider-meta dt{color:var(--muted)}.provider-meta dd{margin:0;font-weight:650;overflow-wrap:anywhere}
+  .hardware-list{display:grid;gap:10px}.hardware-observation{border:1px solid var(--line);border-radius:10px;padding:14px;background:#fff}.hardware-observation h3{margin:0 0 7px;font-size:1rem}.hardware-observation p{margin:3px 0;color:var(--muted);font-size:.88rem}.hardware-observation code{color:var(--green);font-weight:700}
+  .raw-provider-payload{margin-top:18px}.raw-provider-payload summary{cursor:pointer;font-weight:700}.raw-provider-payload pre{max-height:520px;overflow:auto;margin:12px 0 0;padding:14px;border-radius:9px;background:#202725;color:#c7ead8;font:12px/1.5 ui-monospace,SFMono-Regular,monospace;white-space:pre-wrap;overflow-wrap:anywhere}.provider-route-card{margin-bottom:18px}.provider-route-map{height:420px;border-radius:10px;overflow:hidden}.provider-route-caption{margin:10px 0 0;color:var(--muted);font-size:.82rem}
+  @media(max-width:880px){.provider-detail-grid{grid-template-columns:1fr}.provider-meta div{grid-template-columns:1fr;gap:2px}}
+</style>
+<p class="eyebrow provider-breadcrumb"><a href="/activities">ACTIVITIES</a>{% if source.canonical_activity_public_id %} / <a href="/activities/{{ source.canonical_activity_public_id }}">{{ source.canonical_activity_name }}</a>{% endif %} / PROVIDER ACTIVITY</p>
+<div class="page-heading">
+  <div>
+    <h1>{{ source.name or 'Untitled provider activity' }}</h1>
+    <p class="lead">{{ source.connection_name }} · {{ source.provider_type|replace('_', ' ')|title }}</p>
+  </div>
+  {% if source.canonical_activity_public_id %}<a class="button secondary" href="/activities/{{ source.canonical_activity_public_id }}">Open activity</a>{% endif %}
+</div>
+
+<div class="provider-detail-grid">
+  <section class="card">
+    <h2>Provider activity details</h2>
+    <dl class="provider-meta">
+      <div><dt>Connection</dt><dd>{{ source.connection_name }} <code>{{ source.connection_identifier }}</code></dd></div>
+      <div><dt>Provider</dt><dd>{{ source.provider_type }}</dd></div>
+      <div><dt>Provider activity ID</dt><dd><code>{{ source.external_activity_id }}</code></dd></div>
+      {% if source.provider_type == 'STRAVA_PROXY' and source.external_activity_id %}<div><dt>Strava</dt><dd><a class="strava-activity-link" href="https://www.strava.com/activities/{{ source.external_activity_id }}" target="_blank" rel="noopener noreferrer">Open on Strava</a></dd></div>{% endif %}
+      <div><dt>Title</dt><dd>{{ source.name or '—' }}</dd></div>
+      <div><dt>Started</dt><dd>{{ source.started_at|activity_datetime }}</dd></div>
+      <div><dt>Duration</dt><dd>{{ source.duration_label }}</dd></div>
+      <div><dt>Distance</dt><dd>{{ ((source.distance_m or 0) / 1000)|km(2) }} km</dd></div>
+      <div><dt>Sport type</dt><dd>{{ source.sport_type or '—' }}</dd></div>
+      <div><dt>Device</dt><dd>{{ source.device_name }}</dd></div>
+      {% if source.provider_type == 'STRAVA_PROXY' %}
+      <div><dt>Strava bike</dt><dd>{% if source.gear_id %}{% if source.strava_gear %}<span class="strava-gear-name"><strong>{{ source.strava_gear.name }}</strong> <code>{{ source.strava_gear.external_gear_id }}</code></span>{% if source.strava_gear.bike_id %}<span class="strava-gear-match">Mapped to Bike Garage: {{ source.strava_gear.bike_name }} ({{ source.strava_gear.bike_identifier }})</span>{% else %}<span class="strava-gear-unmatched">Not mapped to a Bike Garage bike</span>{% endif %}{% else %}<span class="strava-gear-name"><strong>Unknown Strava bike</strong> <code>{{ source.gear_id }}</code></span><span class="strava-gear-unmatched">Not mapped to a Bike Garage bike</span>{% endif %}{% else %}<span class="strava-gear-unmatched">No bike set on Strava</span>{% endif %}</dd></div>
+      {% endif %}
+      {% if source.canonical_activity_public_id %}<div><dt>Canonical activity</dt><dd><a href="/activities/{{ source.canonical_activity_public_id }}">{{ source.canonical_activity_name }}</a></dd></div>{% endif %}
+    </dl>
+    <details class="raw-provider-payload">
+      <summary>Raw provider payload</summary>
+      <pre>{{ source.raw_payload_pretty }}</pre>
+    </details>
+  </section>
+
+  <section class="card">
+    <h2>Observed sensors</h2>
+    <p class="field-help">Sensor identities decoded from the activity FIT file. They can be matched to bike components by ANT+ device number.</p>
+    {% if source.hardware %}
+      <div class="hardware-list" style="margin-top:16px">
+        {% for hardware in source.hardware %}
+          <article class="hardware-observation">
+            <h3>{{ hardware.component_type|replace('_', ' ')|title }}{% if hardware.manufacturer_name %} · {{ hardware.manufacturer_name }}{% endif %}</h3>
+            <p>ANT+ device number: <code>{{ hardware.ant_device_number if hardware.ant_device_number is not none else '—' }}</code></p>
+            {% if hardware.serial_number is not none %}<p>Serial number: <code>{{ hardware.serial_number }}</code></p>{% endif %}
+            {% if hardware.product_name or hardware.product_id %}<p>Product: {{ hardware.product_name or hardware.product_id }}</p>{% endif %}
+            {% if hardware.battery_status %}<p>Battery status: {{ hardware.battery_status }}</p>{% endif %}
+            <p>Observed: {{ hardware.observed_at }}</p>
+          </article>
+        {% endfor %}
+      </div>
+    {% elif source.provider_type == 'HAMMERHEAD' %}
+      <p class="empty" style="margin-top:16px">No supported ANT+ device-info records were found in this FIT file.</p>
+    {% else %}
+      <p class="empty" style="margin-top:16px">This provider does not supply a FIT hardware inventory for this activity.</p>
+    {% endif %}
+  </section>
+</div>
+
+{% if source.route_polyline %}
+<section class="card provider-route-card">
+  <div class="section-heading"><h2>Route</h2><span>{{ ((source.distance_m or 0) / 1000)|km(2) }} km</span></div>
+  <div id="provider-route-map" class="provider-route-map"></div>
+  <p class="provider-route-caption">Route from this provider activity.</p>
+</section>
+{% endif %}
+
+{% if source.route_polyline %}<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"><script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script><script>
+const encoded={{ source.route_polyline|tojson }};
+function decodePolyline(str){let index=0,lat=0,lng=0,out=[];while(index<str.length){let b,shift=0,result=0;do{b=str.charCodeAt(index++)-63;result|=(b&31)<<shift;shift+=5}while(b>=32);lat+=(result&1)?~(result>>1):(result>>1);shift=0;result=0;do{b=str.charCodeAt(index++)-63;result|=(b&31)<<shift;shift+=5}while(b>=32);lng+=(result&1)?~(result>>1):(result>>1);out.push([lat/1e5,lng/1e5])}return out}
+const routePoints=decodePolyline(encoded);const providerMap=L.map('provider-route-map');L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',{attribution:'© OpenStreetMap contributors'}).addTo(providerMap);const providerLine=L.polyline(routePoints,{color:'#2f765b',weight:5}).addTo(providerMap);requestAnimationFrame(()=>{providerMap.invalidateSize();providerMap.fitBounds(providerLine.getBounds(),{padding:[18,18]})});
+</script>{% endif %}
+{% endblock %}

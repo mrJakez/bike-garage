@@ -1,0 +1,29 @@
+{% extends "base.html" %}
+{% block title %}Connect {{ provider.name }} · Bike Garage{% endblock %}
+{% block content %}
+<style>.activity-picker{margin-top:7px}.activity-picker-columns{display:grid;grid-template-columns:1fr 1fr;gap:12px}.activity-picker-column{border:1px solid #cfcac0;border-radius:8px;background:#fff;min-height:245px;padding:8px}.activity-picker-column-heading{display:flex;align-items:center;justify-content:space-between}.activity-picker-column h3{font-size:.75rem;text-transform:uppercase;letter-spacing:.06em;color:var(--muted);margin:4px 7px 8px}.activity-picker-clear{padding:4px 7px;background:transparent;color:var(--muted);font-size:.75rem}.activity-picker-clear:hover{color:var(--ink);background:#e8f2ed}.activity-picker-list{display:grid;gap:4px}.activity-picker-item{display:flex;align-items:center;justify-content:space-between;gap:8px;width:100%;padding:7px 9px;border:0;border-radius:6px;background:transparent;color:var(--ink);font:inherit;text-align:left;cursor:pointer}.activity-picker-item:hover{background:#e8f2ed}.activity-picker-item span{font-size:.8rem;color:var(--green);font-weight:700}.activity-picker-empty{color:var(--muted);font-size:.85rem;margin:10px 7px}@media(max-width:650px){.activity-picker-columns{grid-template-columns:1fr}}</style>
+<p class="eyebrow">PROVIDER CONNECTIONS / {{ provider.name|upper }}</p>
+<h1>Connect {{ provider.name }}</h1>
+<p class="lead">{{ provider.description }}</p>
+<div class="notice">First authorize the Strava account in Strava Proxy. Then enter the same account identifier here, for example <code>dennis</code> or <code>conny</code>.</div>
+<form class="card form-card" method="post">
+  <label>Connection name<input name="display_name" value="{{ user.display_name }} via {{ provider.name }}" required></label>
+  <label>Connection identifier<input name="identifier" placeholder="e.g. dennis-strava" required pattern="[a-z0-9][a-z0-9_-]{0,63}"><span class="field-help">Stable local ID for resolver rules, for example <code>dennis-strava</code>.</span></label>
+  <label>Strava Proxy URL <input name="endpoint_url" type="url" value="http://host.docker.internal:3000" required></label>
+  <label>Proxy account identifier <input name="external_account_id" placeholder="e.g. dennis" required pattern="[A-Za-z0-9][A-Za-z0-9_-]{0,63}"></label>
+  <label>Proxy API Key <input name="access_token" type="password" placeholder="Only needed when PROXY_API_KEY is enabled"></label>
+  <label>Activity types</label>
+  <div class="activity-picker" data-activity-picker>
+    <div class="activity-picker-columns">
+      <section class="activity-picker-column"><h3>Available</h3><div class="activity-picker-list" data-activity-available></div></section>
+      <section class="activity-picker-column"><div class="activity-picker-column-heading"><h3>Selected</h3><button type="button" class="activity-picker-clear" data-clear-selected>Remove all</button></div><div class="activity-picker-list" data-activity-selected>
+        {% for activity_type in activity_types %}<button type="button" class="activity-picker-item" data-activity-value="{{ activity_type }}" data-move="remove"><strong>{{ activity_type }}</strong><span>Remove</span></button>{% endfor %}
+      </div><p class="activity-picker-empty" data-activity-empty hidden>No activity types selected.</p></section>
+    </div>
+  </div>
+  <p class="field-help">Click an activity type to add or remove it. An empty selection imports all types.</p>
+  <p class="field-help">On macOS Docker, <code>host.docker.internal</code> reaches a proxy that runs on your host. The health endpoint is checked before the connection is saved. The API key is stored locally in SQLite for this prototype.</p>
+  <div class="form-actions"><a href="/providers">Cancel</a><button type="submit">Save connection</button></div>
+</form>
+<script src="/static/activity-picker.js"></script>
+{% endblock %}

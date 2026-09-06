@@ -1,0 +1,19 @@
+{% extends "base.html" %}
+{% set editing = editing_hammerhead|default(false) %}
+{% block title %}{{ 'Edit' if editing else 'Connect' }} Hammerhead · Bike Garage{% endblock %}
+{% block content %}
+<p class="eyebrow">PROVIDER CONNECTIONS / HAMMERHEAD</p>
+<h1>{{ 'Edit Hammerhead' if editing else 'Connect Hammerhead' }}</h1>
+<p class="lead">{{ provider.description }}</p>
+<div class="notice">Bike Garage uses Hammerhead’s OAuth authorization-code flow and requests only <code>activity:read</code>. Register the callback URL shown below in your Hammerhead developer settings before continuing.</div>
+<form class="card form-card" method="post">
+  <label>Connection name<input name="display_name" value="{{ provider_connection.display_name if editing else user.display_name ~ ' via Hammerhead' }}" required></label>
+  <label>Connection identifier<input name="identifier" value="{{ provider_connection.identifier if editing else '' }}" placeholder="e.g. jakez-hammerhead" required pattern="[a-z0-9][a-z0-9_-]{0,63}"><span class="field-help">Stable local ID for resolver rules.</span></label>
+  <label>Hammerhead API base URL<input name="endpoint_url" type="url" value="{{ provider_connection.endpoint_url if editing else 'https://api.hammerhead.io/v1/api' }}" required><span class="field-help">Usually leave this at the official API URL.</span></label>
+  <label>Hammerhead Client ID<input name="oauth_client_id" value="{{ provider_connection.oauth_client_id if editing else '' }}" required></label>
+  <label>Hammerhead Client Secret<input name="oauth_client_secret" type="password" placeholder="{{ 'Leave empty to keep the saved secret' if editing else 'Client Secret from Hammerhead developer settings' }}" {% if not editing %}required{% endif %}></label>
+  {% if editing and provider_connection.external_account_id %}<p class="field-help">Authorized Hammerhead user ID: <code>{{ provider_connection.external_account_id }}</code></p>{% endif %}
+  <p class="field-help">Register <code>http://localhost:8000/providers/HAMMERHEAD/callback</code> as a Redirect URL in Hammerhead. Saving opens Hammerhead’s consent screen; after approval, Bike Garage stores the access and refresh tokens locally.</p>
+  <div class="form-actions"><a href="/providers">Cancel</a><button type="submit">{{ 'Save changes' if editing else 'Save connection' }}</button></div>
+</form>
+{% endblock %}
