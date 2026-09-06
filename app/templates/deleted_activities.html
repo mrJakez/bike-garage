@@ -1,0 +1,25 @@
+{% extends "base.html" %}
+{% block title %}Deleted activities · Bike Garage{% endblock %}
+{% block content %}
+<p class="eyebrow">ACTIVITY STREAM / ARCHIVE</p>
+<div class="page-heading"><div><h1>Deleted activities</h1><p class="lead">These activities are excluded from rules, mileage, and Strava updates until restored.</p></div><a class="button secondary" href="/activities">Back to activities</a></div>
+
+{% if deleted_activities %}
+<section class="card deleted-activity-card">
+  <div class="deleted-activity-head"><span>Activity</span><span>Deleted</span><span></span></div>
+  {% for activity in deleted_activities %}
+  <article class="deleted-activity-row">
+    <div><strong>{{ activity.name or 'Untitled activity' }}</strong><span>{{ activity.started_at|activity_datetime }} · {{ ((activity.distance_m or 0) / 1000)|km }} km{% if activity.sources %} · {{ activity.sources }}{% endif %}</span></div>
+    <time>{{ activity.deleted_at|log_datetime }}</time>
+    <form method="post" action="/activities/{{ activity.public_id }}/restore"><button type="submit">Restore</button></form>
+  </article>
+  {% endfor %}
+</section>
+{% else %}
+<section class="card"><h2>No deleted activities</h2><p>Activities marked as deleted will appear here and can be restored.</p></section>
+{% endif %}
+
+<style>
+  .deleted-activity-card{padding:0;overflow:hidden}.deleted-activity-head,.deleted-activity-row{display:grid;grid-template-columns:minmax(0,1fr) 190px auto;align-items:center;gap:18px}.deleted-activity-head{padding:11px 24px;background:#f6f4ee;color:var(--muted);font-size:.7rem;font-weight:750;letter-spacing:.06em;text-transform:uppercase}.deleted-activity-row{padding:17px 24px;border-top:1px solid var(--line)}.deleted-activity-row strong,.deleted-activity-row span{display:block}.deleted-activity-row span,.deleted-activity-row time{margin-top:4px;color:var(--muted);font-size:.82rem}.deleted-activity-row time{margin:0}.deleted-activity-row form{margin:0}.deleted-activity-row button{padding:8px 12px;font-size:.78rem}@media(max-width:640px){.deleted-activity-head{display:none}.deleted-activity-row{grid-template-columns:1fr auto;gap:12px}.deleted-activity-row time{grid-column:1;grid-row:2}.deleted-activity-row form{grid-column:2;grid-row:1 / span 2}}
+</style>
+{% endblock %}

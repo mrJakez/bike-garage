@@ -2,8 +2,8 @@
 {% block title %}{{ bike.name }} · Bike Garage{% endblock %}
 {% block content %}
 <p class="eyebrow bike-breadcrumb"><a href="/bikes">GARAGE</a><span>/ {{ bike.name }}</span></p>
-<div class="page-heading"><div><h1>{{ bike.name }}</h1><p class="lead">{{ bike.bike_type }} · {{ bike.owner_name }}</p></div><div class="connection-buttons"><a class="button secondary" href="/bikes/{{ bike.id }}/edit">Edit bike</a></div></div>
-<section class="bike-detail-card"><img class="bike-detail-photo" src="/bike-photos/{{ bike.photo_filename }}" alt="{{ bike.name }}"><div class="bike-detail-copy"><h2>Current bike state</h2><p class="muted">Mileage is calculated from assigned activities since Garage start.</p><dl class="detail-list"><div><dt>Owner</dt><dd>{{ bike.owner_name }}</dd></div><div><dt>Type</dt><dd>{{ bike.bike_type }}</dd></div><div><dt>Starting mileage</dt><dd>{{ ((bike.starting_mileage_m or 0) / 1000)|km }} km</dd></div>{% if bike.mileage_tracking_active %}<div><dt>Since Garage start</dt><dd>+ {{ ((bike.activity_mileage_m or 0) / 1000)|km }} km</dd></div>{% else %}<div><dt>Automatic tracking</dt><dd>Not active</dd></div>{% endif %}</dl>
+<div class="page-heading"><div><h1>{{ bike.name }}</h1><p class="lead">{{ bike.bike_type }}{% if bike.frame_number %} · Frame {{ bike.frame_number }}{% endif %}</p></div><div class="connection-buttons"><a class="button secondary" href="/bikes/{{ bike.id }}/edit">Edit bike</a></div></div>
+<section class="bike-detail-card"><img class="bike-detail-photo" src="/bike-photos/{{ bike.photo_filename }}" alt="{{ bike.name }}"><div class="bike-detail-copy"><h2>Current bike state</h2><p class="muted">Mileage is calculated from assigned activities since Garage start.</p><dl class="detail-list"><div><dt>Type</dt><dd>{{ bike.bike_type }}</dd></div>{% if bike.frame_number %}<div><dt>Frame number</dt><dd>{{ bike.frame_number }}</dd></div>{% endif %}<div><dt>Starting mileage</dt><dd>{{ ((bike.starting_mileage_m or 0) / 1000)|km }} km</dd></div>{% if bike.mileage_tracking_active %}<div><dt>Since Garage start</dt><dd>+ {{ ((bike.activity_mileage_m or 0) / 1000)|km }} km</dd></div>{% else %}<div><dt>Automatic tracking</dt><dd>Not active</dd></div>{% endif %}</dl>
   <details class="mileage-ledger">
     <summary><span><strong>Total mileage</strong><small>Open mileage ledger</small></span><strong>{{ ((bike.total_mileage_m or 0) / 1000)|km }} km</strong></summary>
     <div class="mileage-ledger-list">
@@ -21,7 +21,7 @@
   {% if strava_gear_links %}
   <dl class="detail-list strava-gear-link-list">{% for gear in strava_gear_links %}<div><dt><span class="strava-link-icon">S</span>{{ gear.connection_name }}</dt><dd><strong>{{ gear.name }}</strong>{% if gear.is_primary %}<small>Primary Strava bike</small>{% endif %}<small>Gear ID: {{ gear.external_gear_id }}</small></dd></div>{% endfor %}</dl>
   {% else %}<p class="muted">No Strava bike is linked to this bike.</p>{% endif %}
-  <h2 class="subheading">Components</h2>{% if components %}<dl class="detail-list">{% for component in components %}<div><dt>{{ component.component_type|replace('_', ' ')|title }}</dt><dd>ANT+ {{ component.ant_device_number }}</dd></div>{% endfor %}</dl>{% else %}<p class="muted">No ANT+ component IDs configured.</p>{% endif %}<form method="post" action="/bikes/{{ bike.id }}/delete" onsubmit="return confirm('Delete this bike and its stored photo?');"><button class="danger-button" type="submit">Delete bike</button></form></div></section>
+  <h2 class="subheading">Components</h2>{% if components %}<dl class="detail-list">{% for component in components %}<div><dt>{{ component.component_type|replace('_', ' ')|title }}</dt><dd>ANT+ {{ component.ant_device_number }}</dd></div>{% endfor %}</dl>{% else %}<p class="muted">No ANT+ component IDs configured.</p>{% endif %}{% if bike.details_markdown %}<h2 class="subheading">Bike details</h2><pre class="bike-markdown-details">{{ bike.details_markdown }}</pre>{% endif %}<form method="post" action="/bikes/{{ bike.id }}/delete" onsubmit="return confirm('Delete this bike and its stored photo?');"><button class="danger-button" type="submit">Delete bike</button></form></div></section>
 <style>
   .bike-breadcrumb { display:flex; gap:7px; }
   .bike-breadcrumb a { color:var(--green); text-decoration:none; }
@@ -50,6 +50,7 @@
   .mileage-ledger-more { display:block; padding:11px 12px; border-top:1px solid var(--line); color:var(--green); font-size:.86rem; font-weight:750; text-align:right; text-decoration:none; }
   .mileage-ledger-more:hover { background:#edf6f0; text-decoration:underline; }
   .mileage-ledger-empty { padding:12px; margin:0; color:var(--muted); font-size:.88rem; border-bottom:1px solid var(--line); }
+  .bike-markdown-details{margin:10px 0 18px;padding:14px;overflow:auto;border:1px solid var(--line);border-radius:9px;background:#202522;color:#edf4ed;font:500 .82rem/1.55 ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;white-space:pre-wrap;word-break:break-word}
   @media(max-width:620px){ .bike-detail-copy > .detail-list > div { padding-right:48px; }.mileage-ledger summary { grid-template-columns:minmax(0,1fr) auto 30px; }.mileage-ledger summary::after { width:30px; } }
   .strava-gear-link-list dt { display:flex; align-items:center; gap:7px; }
   .strava-gear-link-list dd { display:grid; gap:2px; }

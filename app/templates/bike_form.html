@@ -35,7 +35,7 @@
           <option value="{{ bike_type }}" {% if editing and bike.bike_type == bike_type %}selected{% endif %}>{{ bike_type }}</option>
           {% endfor %}
         </select></label>
-        <label class="bike-editor-field">Owner<input name="owner_name" value="{{ bike.owner_name if editing else user.display_name }}" required></label>
+        <label class="bike-editor-field">Frame number<input name="frame_number" value="{{ bike.frame_number or '' if editing else '' }}" placeholder="e.g. WSBC604123456R"></label>
         <label class="bike-editor-field bike-field-wide">Identifier<input name="identifier" value="{{ bike.identifier if editing else '' }}" placeholder="tarmac" required><span class="field-help">Stable key used in expressions such as <code>bikes.find(identifier="tarmac")</code>.</span></label>
       </div>
     </section>
@@ -83,6 +83,12 @@
       </div>
     </section>
 
+    <section class="bike-editor-card">
+      <div class="section-heading"><div><p class="eyebrow">CONFIGURATION</p><h2>Bike details</h2></div><p>Keep the complete captured specification, parts list, and notes as Markdown.</p></div>
+      <label class="bike-editor-field markdown-editor-field"><span>Markdown details</span><textarea name="details_markdown" rows="18" maxlength="100000" spellcheck="false" data-markdown-editor placeholder="# Frame&#10;&#10;- Groupset: …&#10;- Wheels: …&#10;- Notes: …">{{ bike.details_markdown if editing else '' }}</textarea><span class="field-help">Markdown is saved as entered. Use it for the complete bike configuration captured from product pages.</span></label>
+      <label class="markdown-file-import"><span>Load a Markdown file</span><input type="file" accept=".md,.markdown,text/markdown,text/plain" data-markdown-file><small>The file is loaded into the editor; saving the bike stores its content.</small></label>
+    </section>
+
     <div class="form-actions bike-editor-actions"><a href="{{ '/bikes/' ~ bike.id if editing else '/bikes' }}">Cancel</a><button type="submit">{{ 'Save changes' if editing else 'Create bike' }}</button></div>
   </div>
 </form>
@@ -109,6 +115,8 @@
   .bike-field-wide { grid-column:1 / -1; }
   .bike-editor-field { display:grid; gap:7px; color:var(--ink); font-weight:800; }
   .bike-editor-field input, .bike-editor-field select { width:100%; min-width:0; height:48px; margin:0; padding:10px 13px; border:1px solid #cfcac0; border-radius:8px; background:#fff; color:var(--ink); font:inherit; font-size:16px; font-weight:600; line-height:1.2; }
+  .markdown-editor-field textarea{width:100%;min-height:330px;resize:vertical;margin:0;padding:14px;border:1px solid #cfcac0;border-radius:8px;background:#202522;color:#edf4ed;font:500 13px/1.55 ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;tab-size:2}.markdown-editor-field textarea:focus{outline:2px solid #9bc5b2;outline-offset:1px;border-color:var(--green)}
+  .markdown-file-import{display:grid;gap:5px;width:max-content;max-width:100%;margin-top:12px;color:var(--muted);font-size:.78rem;font-weight:750}.markdown-file-import input{max-width:100%;font:inherit;font-size:.8rem}.markdown-file-import small{font-weight:500}
   .bike-editor-field select.bike-type-select { padding:10px 44px 10px 13px; background:#fff url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='16' height='16' viewBox='0 0 16 16'%3E%3Cpath d='m4 6 4 4 4-4' fill='none' stroke='%231d2423' stroke-width='1.8' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E") no-repeat right 14px center; background-size:16px; cursor:pointer; appearance:none; -webkit-appearance:none; }
   .bike-editor-field select.bike-type-select:focus { outline:2px solid #9bc5b2; outline-offset:1px; border-color:var(--green); }
   .input-with-suffix { display:flex; max-width:280px; }
@@ -170,6 +178,19 @@
       const chip = remove.closest('[data-gear-chip]');
       const option = select.querySelector(`option[value="${chip.dataset.gearId}"]`); if (option) option.disabled = false;
       chip.remove(); refreshEmpty();
+    });
+  })();
+  (() => {
+    const fileInput = document.querySelector('[data-markdown-file]');
+    const editor = document.querySelector('[data-markdown-editor]');
+    if (!fileInput || !editor) return;
+    fileInput.addEventListener('change', () => {
+      const file = fileInput.files && fileInput.files[0];
+      if (!file) return;
+      if (file.size > 100000) { window.alert('Markdown files must be 100 KB or smaller.'); fileInput.value = ''; return; }
+      const reader = new FileReader();
+      reader.onload = () => { editor.value = String(reader.result || '').replace(/\r\n/g, '\n'); };
+      reader.readAsText(file);
     });
   })();
 </script>

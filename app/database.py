@@ -56,6 +56,8 @@ def initialise_database() -> None:
                 user_id INTEGER PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
                 mileage_tracking_started_at TEXT,
                 mileage_tracking_started_at_epoch INTEGER,
+                scheduler_enabled INTEGER NOT NULL DEFAULT 1,
+                scheduler_interval_seconds INTEGER,
                 updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
             );
 
@@ -66,6 +68,8 @@ def initialise_database() -> None:
                 identifier TEXT NOT NULL DEFAULT '',
                 bike_type TEXT NOT NULL,
                 owner_name TEXT NOT NULL,
+                frame_number TEXT,
+                details_markdown TEXT NOT NULL DEFAULT '',
                 photo_filename TEXT NOT NULL,
                 starting_mileage_m REAL NOT NULL DEFAULT 0,
                 created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
@@ -243,6 +247,11 @@ def initialise_database() -> None:
             """
         )
         existing_columns = {row["name"] for row in db.execute("PRAGMA table_info(provider_connections)")}
+        user_settings_columns = {row["name"] for row in db.execute("PRAGMA table_info(user_settings)")}
+        if "scheduler_enabled" not in user_settings_columns:
+            db.execute("ALTER TABLE user_settings ADD COLUMN scheduler_enabled INTEGER NOT NULL DEFAULT 1")
+        if "scheduler_interval_seconds" not in user_settings_columns:
+            db.execute("ALTER TABLE user_settings ADD COLUMN scheduler_interval_seconds INTEGER")
         for name, definition in (
             ("identifier", "TEXT NOT NULL DEFAULT ''"),
             ("last_tested_at", "TEXT"),
@@ -289,6 +298,10 @@ def initialise_database() -> None:
                 db.execute("UPDATE bikes SET identifier=? WHERE id=?", (f"bike-{bike['id']}", bike["id"]))
         if "starting_mileage_m" not in bike_columns:
             db.execute("ALTER TABLE bikes ADD COLUMN starting_mileage_m REAL NOT NULL DEFAULT 0")
+        if "frame_number" not in bike_columns:
+            db.execute("ALTER TABLE bikes ADD COLUMN frame_number TEXT")
+        if "details_markdown" not in bike_columns:
+            db.execute("ALTER TABLE bikes ADD COLUMN details_markdown TEXT NOT NULL DEFAULT ''")
         if "expected_bike_count" not in activity_columns:
             db.execute("ALTER TABLE activities ADD COLUMN expected_bike_count INTEGER NOT NULL DEFAULT 1")
         if "manual_title" not in activity_columns:

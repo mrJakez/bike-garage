@@ -25,6 +25,16 @@
 <p class="eyebrow">SETTINGS</p>
 <h1>Provider connections</h1>
 <p class="lead">Connect a source account for every rider whose activities should appear in Bike Garage.</p>
+<details class="provider-transfer">
+  <summary>Move connections to another Bike Garage</summary>
+  <div class="provider-transfer-content">
+    <p>The export includes provider credentials, including access and refresh tokens. Store the downloaded file securely and delete it after import. Exporting also deactivates all provider connections on this Bike Garage, so scheduled syncs stop here.</p>
+    <div class="provider-transfer-actions">
+      <form method="post" action="/providers/export-and-deactivate" onsubmit="return confirm('Download the credential export and deactivate every provider connection on this Bike Garage?')"><button type="submit" class="secondary">Export and deactivate</button></form>
+      <form method="post" action="/providers/import" enctype="multipart/form-data" class="provider-import-form"><label><span>Import export file</span><input type="file" name="archive" accept="application/json,.json" required></label><button type="submit">Import and activate</button></form>
+    </div>
+  </div>
+</details>
 <div class="provider-grid">
   {% for key, provider in providers.items() %}
   <section class="card provider-card">
@@ -48,4 +58,7 @@
 {% else %}
   <p class="empty">No provider connection yet.</p>
 {% endif %}
+<style>
+  .provider-transfer{margin:22px 0 30px;border:1px solid var(--line);border-radius:10px;background:#f8f7f3}.provider-transfer summary{padding:14px 17px;cursor:pointer;color:var(--muted);font-size:.84rem;font-weight:750}.provider-transfer-content{padding:0 17px 17px;border-top:1px solid var(--line)}.provider-transfer-content p{max-width:760px;color:var(--muted);font-size:.84rem;line-height:1.5}.provider-transfer-actions{display:flex;align-items:end;flex-wrap:wrap;gap:16px}.provider-transfer-actions form{margin:0}.provider-import-form{display:flex;align-items:end;flex-wrap:wrap;gap:10px}.provider-import-form label{display:grid;gap:5px;color:var(--muted);font-size:.76rem;font-weight:700}.provider-import-form input{max-width:245px;font:inherit;font-size:.78rem}@media(max-width:600px){.provider-transfer-actions,.provider-import-form{align-items:stretch}.provider-import-form{display:grid;width:100%}.provider-import-form input{max-width:100%}}
+</style>
 {% endblock %}

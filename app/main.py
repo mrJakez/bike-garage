@@ -21,7 +21,7 @@ from .connectors.strava_proxy import fetch_bikes as fetch_strava_bikes, health_c
 from .connectors.hammerhead import DEFAULT_API_BASE_URL, authorization_url as hammerhead_authorization_url, exchange_code as exchange_hammerhead_code, fetch_activity_detail as fetch_hammerhead_activity_detail, fetch_activity_fit as fetch_hammerhead_activity_fit, normalise_base_url as normalise_hammerhead_base_url, test_connection as test_hammerhead_connection
 from .database import connection, initial_user, initialise_database
 from .auth import complete_authentication, complete_registration, has_passkey, issue_authentication_options, issue_registration_options, registration_enabled
-from .sync import ActivityContext, apply_rule, attach_hardware_observations, expression_error, evaluate_expression, refresh_all_canonical_timings, refresh_hammerhead_connection_token, repair_strava_local_start_times, start_sync_loop, store_fit_hardware, sync_all_connections, validate_expression
+from .sync import ActivityContext, apply_rule, attach_hardware_observations, expression_error, evaluate_expression, notify_scheduler_settings_changed, refresh_all_canonical_timings, refresh_hammerhead_connection_token, scheduler_configuration, start_sync_loop, store_fit_hardware, sync_all_connections, validate_expression
 
 
 APP_ROOT = Path(__file__).parent
@@ -844,14 +844,203 @@ def providers(request: Request):
     return templates.TemplateResponse(request, "providers.html", page_context(request))
 
 
+PROVIDER_TRANSFER_FIELDS = (
+    "provider_type", "display_name", "identifier", "endpoint_url", "access_token",
+    "external_account_id", "oauth_client_id", "oauth_client_secret", "refresh_token",
+    "token_expires_at",
+)
+
+
+def provider_transfer_record(row: object) -> dict[str, object]:
+    """Return the portable, credential-bearing portion of a provider connection."""
+    record = {field: row[field] for field in PROVIDER_TRANSFER_FIELDS}
+    try:
+        activity_types = json.loads(row["activity_types_json"] or "[]")
+    except (TypeError, json.JSONDecodeError):
+        activity_types = []
+    record["activity_types"] = activity_types if isinstance(activity_types, list) else []
+    return record
+
+
+@app.post("/providers/export-and-deactivate")
+def export_and_deactivate_provider_connections():
+    """Download credentials for a controlled environment move, then stop syncing here."""
+    user = initial_user()
+    with connection() as db:
+        rows = db.execute(
+            """SELECT * FROM provider_connections
+               WHERE user_id=? AND provider_type IN ('STRAVA_PROXY', 'HAMMERHEAD')
+               ORDER BY id""",
+            (user["id"],),
+        ).fetchall()
+        if not rows:
+            return RedirectResponse("/providers?notice=No+saved+provider+connections+to+export", status_code=303)
+        export_document = {
+            "format": "bike-garage-provider-connections",
+            "version": 1,
+            "exported_at": datetime.now(UTC).isoformat(),
+            "connections": [provider_transfer_record(row) for row in rows],
+        }
+        db.execute(
+            """UPDATE provider_connections
+               SET status='DISCONNECTED', oauth_state=NULL, updated_at=CURRENT_TIMESTAMP
+               WHERE user_id=? AND provider_type IN ('STRAVA_PROXY', 'HAMMERHEAD')""",
+            (user["id"],),
+        )
+    filename = f"bike-garage-connections-{datetime.now(UTC).strftime('%Y%m%d-%H%M%S')}.json"
+    return Response(
+        content=json.dumps(export_document, indent=2) + "\n",
+        media_type="application/json",
+        headers={
+            "Content-Disposition": f'attachment; filename="{filename}"',
+            "Cache-Control": "no-store",
+        },
+    )
+
+
+@app.post("/providers/import")
+async def import_provider_connections(archive: UploadFile = File(...)):
+    """Import a previously exported provider credential archive and activate it here."""
+    try:
+        raw_document = await archive.read()
+        if len(raw_document) > 1_000_000:
+            raise ValueError("The file is too large.")
+        document = json.loads(raw_document.decode("utf-8"))
+        records = document.get("connections") if isinstance(document, dict) else None
+        if not isinstance(document, dict) or document.get("format") != "bike-garage-provider-connections" or document.get("version") != 1:
+            raise ValueError("This is not a Bike Garage provider-connections export.")
+        if not isinstance(records, list) or not records:
+            raise ValueError("The export does not contain any connections.")
+        if len(records) > 100:
+            raise ValueError("The export contains too many connections.")
+    except (UnicodeDecodeError, json.JSONDecodeError, ValueError) as error:
+        return RedirectResponse("/providers?" + urlencode({"notice": f"Import failed: {error}"}), status_code=303)
+
+    imported: list[dict[str, object]] = []
+    identifiers: set[str] = set()
+    try:
+        for record in records:
+            if not isinstance(record, dict):
+                raise ValueError("Each connection must be an object.")
+            provider_type = record.get("provider_type")
+            display_name = record.get("display_name")
+            identifier = record.get("identifier")
+            if provider_type not in {"STRAVA_PROXY", "HAMMERHEAD"}:
+                raise ValueError("An export contains an unsupported provider.")
+            if not isinstance(display_name, str) or not display_name.strip():
+                raise ValueError("Every connection needs a name.")
+            if not isinstance(identifier, str) or not CONNECTION_IDENTIFIER_PATTERN.fullmatch(identifier):
+                raise ValueError("Every connection needs a valid identifier.")
+            if identifier in identifiers:
+                raise ValueError("The export contains the same identifier more than once.")
+            identifiers.add(identifier)
+            activity_types = record.get("activity_types") or []
+            if not isinstance(activity_types, list) or any(
+                not isinstance(item, str) or item not in STRAVA_ACTIVITY_TYPES for item in activity_types
+            ):
+                raise ValueError("An export contains invalid activity types.")
+            copied = {field: record.get(field) for field in PROVIDER_TRANSFER_FIELDS}
+            if any(value is not None and not isinstance(value, str) for field, value in copied.items() if field != "token_expires_at"):
+                raise ValueError("An export contains an invalid connection value.")
+            expires_at = copied["token_expires_at"]
+            if expires_at is not None and not isinstance(expires_at, int):
+                raise ValueError("An export contains an invalid token expiry.")
+            copied["display_name"] = display_name.strip()
+            copied["identifier"] = identifier
+            copied["activity_types_json"] = json.dumps(activity_types)
+            has_credentials = (
+                bool(copied["endpoint_url"])
+                and (bool(copied["access_token"]) if provider_type == "STRAVA_PROXY"
+                     else bool(copied["oauth_client_id"]) and bool(copied["oauth_client_secret"]) and bool(copied["access_token"] or copied["refresh_token"]))
+            )
+            copied["status"] = "CONNECTED" if has_credentials else "NEEDS_CONFIGURATION"
+            imported.append(copied)
+    except ValueError as error:
+        return RedirectResponse("/providers?" + urlencode({"notice": f"Import failed: {error}"}), status_code=303)
+
+    user = initial_user()
+    created = 0
+    updated = 0
+    with connection() as db:
+        for record in imported:
+            existing = db.execute(
+                "SELECT id FROM provider_connections WHERE user_id=? AND identifier=?",
+                (user["id"], record["identifier"]),
+            ).fetchone()
+            if existing:
+                db.execute(
+                    """UPDATE provider_connections SET provider_type=?, display_name=?, endpoint_url=?, access_token=?,
+                       external_account_id=?, oauth_client_id=?, oauth_client_secret=?, refresh_token=?, token_expires_at=?,
+                       activity_types_json=?, status=?, oauth_state=NULL, updated_at=CURRENT_TIMESTAMP WHERE id=?""",
+                    (
+                        record["provider_type"], record["display_name"], record["endpoint_url"], record["access_token"],
+                        record["external_account_id"], record["oauth_client_id"], record["oauth_client_secret"],
+                        record["refresh_token"], record["token_expires_at"], record["activity_types_json"],
+                        record["status"], existing["id"],
+                    ),
+                )
+                updated += 1
+            else:
+                db.execute(
+                    """INSERT INTO provider_connections
+                       (user_id, provider_type, display_name, identifier, endpoint_url, access_token, external_account_id,
+                        oauth_client_id, oauth_client_secret, refresh_token, token_expires_at, activity_types_json, status)
+                       VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+                    (user["id"], *(record[field] for field in PROVIDER_TRANSFER_FIELDS),
+                     record["activity_types_json"], record["status"]),
+                )
+                created += 1
+    return RedirectResponse(
+        "/providers?" + urlencode({"notice": f"Imported {created} connection(s); updated {updated}."}),
+        status_code=303,
+    )
+
+
 @app.get("/settings")
 def settings_page(request: Request):
     with connection() as db:
         passkey = db.execute(
             "SELECT created_at,last_used_at FROM passkeys WHERE user_id=?", (initial_user()["id"],)
         ).fetchone()
+    scheduler_enabled, scheduler_interval_seconds = scheduler_configuration()
     return templates.TemplateResponse(
-        request, "settings.html", page_context(request, passkey=dict(passkey) if passkey else None)
+        request,
+        "settings.html",
+        page_context(
+            request,
+            passkey=dict(passkey) if passkey else None,
+            scheduler_enabled=scheduler_enabled,
+            scheduler_interval_minutes=scheduler_interval_seconds // 60,
+        ),
+    )
+
+
+@app.post("/settings/scheduler")
+async def update_scheduler_settings(request: Request):
+    form = parse_qs((await request.body()).decode("utf-8"), keep_blank_values=True)
+    enabled = 1 if form.get("enabled", [""])[0] == "1" else 0
+    try:
+        interval_minutes = int(form.get("interval_minutes", [""])[0])
+        if not 1 <= interval_minutes <= 1_440:
+            raise ValueError
+    except ValueError:
+        return RedirectResponse(
+            "/settings?notice=Choose+an+interval+between+1+and+1440+minutes", status_code=303
+        )
+    user = initial_user()
+    with connection() as db:
+        db.execute(
+            """INSERT INTO user_settings (user_id,scheduler_enabled,scheduler_interval_seconds,updated_at)
+               VALUES (?,?,?,CURRENT_TIMESTAMP)
+               ON CONFLICT(user_id) DO UPDATE SET scheduler_enabled=excluded.scheduler_enabled,
+                 scheduler_interval_seconds=excluded.scheduler_interval_seconds, updated_at=CURRENT_TIMESTAMP""",
+            (user["id"], enabled, interval_minutes * 60),
+        )
+    notify_scheduler_settings_changed()
+    state = "enabled" if enabled else "disabled"
+    return RedirectResponse(
+        "/settings?" + urlencode({"notice": f"Scheduler {state}; interval set to {interval_minutes} minutes"}),
+        status_code=303,
     )
 
 
@@ -909,7 +1098,42 @@ def activities_page(request: Request):
          1 if filters["date_to"] else 0,
          1 if filters["title"] else 0)
     )
-    return templates.TemplateResponse(request, "activities.html", page_context(request, activity_filters=filters))
+    with connection() as db:
+        deleted_activity_count = db.execute(
+            "SELECT COUNT(*) FROM activities WHERE deleted_at IS NOT NULL"
+        ).fetchone()[0]
+    return templates.TemplateResponse(
+        request,
+        "activities.html",
+        page_context(
+            request,
+            activity_filters=filters,
+            deleted_activity_count=deleted_activity_count,
+        ),
+    )
+
+
+@app.get("/activities/deleted")
+def deleted_activities_page(request: Request):
+    """Show soft-deleted activities separately, without mixing them into the stream."""
+    with connection() as db:
+        activities = [dict(row) for row in db.execute(
+            """
+            SELECT a.*, GROUP_CONCAT(pc.display_name, ', ') AS sources
+            FROM activities a
+            LEFT JOIN activity_provider_links apl ON apl.activity_id = a.id
+            LEFT JOIN provider_activities pa ON pa.id = apl.provider_activity_id
+            LEFT JOIN provider_connections pc ON pc.id = pa.connection_id
+            WHERE a.deleted_at IS NOT NULL
+            GROUP BY a.id
+            ORDER BY a.deleted_at DESC, a.id DESC
+            """
+        ).fetchall()]
+    return templates.TemplateResponse(
+        request,
+        "deleted_activities.html",
+        page_context(request, deleted_activities=activities),
+    )
 
 
 @app.get("/rules")
@@ -1669,6 +1893,24 @@ def delete_activity(activity_uuid: str):
     return RedirectResponse("/activities?notice=Activity+marked+as+deleted", status_code=303)
 
 
+@app.post("/activities/{activity_uuid}/restore")
+def restore_activity(activity_uuid: str):
+    """Restore a soft-deleted activity and preserve its audit history."""
+    with connection() as db:
+        activity = db.execute(
+            "SELECT id FROM activities WHERE public_id=? AND deleted_at IS NOT NULL",
+            (activity_uuid,),
+        ).fetchone()
+        if activity is None:
+            return RedirectResponse("/activities/deleted?notice=Deleted+activity+not+found", status_code=303)
+        db.execute(
+            "UPDATE activities SET deleted_at=NULL, updated_at=CURRENT_TIMESTAMP WHERE id=?",
+            (activity["id"],),
+        )
+        record_activity_log(db, activity["id"], "Activity restored from deleted activities.")
+    return RedirectResponse("/activities/deleted?notice=Activity+restored", status_code=303)
+
+
 @app.get("/bikes")
 def bikes_page(request: Request):
     return templates.TemplateResponse(request, "bikes.html", page_context(request))
@@ -1725,18 +1967,29 @@ def placeholder_bike_svg(filename: str) -> str:
     </svg>'''
 
 
+def bike_configuration_fields(frame_number: str | None, details_markdown: str | None) -> tuple[str, str]:
+    """Validate the free-form bicycle configuration without limiting Markdown syntax."""
+    frame = (frame_number or "").strip()
+    details = (details_markdown or "").replace("\r\n", "\n")
+    if len(frame) > 160:
+        raise ValueError("Frame number must be 160 characters or fewer.")
+    if len(details) > 100_000:
+        raise ValueError("Bike details must be 100,000 characters or fewer.")
+    return frame, details
+
+
 @app.post("/bikes")
 async def create_bike(
     name: str | None = Form(None), identifier: str | None = Form(None), bike_type: str | None = Form(None),
-    owner_name: str | None = Form(None), photo: UploadFile | None = File(None),
+    frame_number: str | None = Form(None), details_markdown: str | None = Form(None), photo: UploadFile | None = File(None),
     starting_mileage_km: str | None = Form(None),
     shifting_ant_device_number: str | None = Form(None), bike_power_ant_device_number: str | None = Form(None),
     seatpost_ant_device_number: str | None = Form(None),
     strava_gear_ids: list[str] = Form([]),
 ):
-    if not name or not identifier or not bike_type or not owner_name:
+    if not name or not identifier or not bike_type:
         return RedirectResponse(
-            "/bikes/new?" + urlencode({"notice": "Name, identifier, bike type, and owner are required."}),
+            "/bikes/new?" + urlencode({"notice": "Name, identifier, and bike type are required."}),
             status_code=303,
         )
     if bike_type not in BIKE_TYPES:
@@ -1748,6 +2001,7 @@ async def create_bike(
         photo_filename = save_photo(photo) if photo and photo.filename else placeholder_photo_filename()
         component_ant_ids = component_ant_ids_from_form(locals())
         starting_mileage_m = max(0, float(starting_mileage_km or "0") * 1000)
+        cleaned_frame_number, cleaned_details_markdown = bike_configuration_fields(frame_number, details_markdown)
     except ValueError as error:
         return RedirectResponse("/bikes/new?" + urlencode({"notice": str(error)}), status_code=303)
     user = initial_user()
@@ -1758,8 +2012,11 @@ async def create_bike(
         except ValueError as error:
             return RedirectResponse("/bikes/new?" + urlencode({"notice": str(error)}), status_code=303)
         cursor = db.execute(
-            "INSERT INTO bikes (user_id, name, identifier, bike_type, owner_name, photo_filename, starting_mileage_m) VALUES (?, ?, ?, ?, ?, ?, ?)",
-            (user["id"], name.strip(), identifier.strip(), bike_type.strip(), owner_name.strip(), photo_filename, starting_mileage_m),
+            """INSERT INTO bikes
+               (user_id, name, identifier, bike_type, owner_name, frame_number, details_markdown, photo_filename, starting_mileage_m)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+            (user["id"], name.strip(), identifier.strip(), bike_type.strip(), user["display_name"], cleaned_frame_number,
+             cleaned_details_markdown, photo_filename, starting_mileage_m),
         )
         save_bike_components(db, cursor.lastrowid, component_ant_ids)
         save_bike_strava_gears(db, cursor.lastrowid, strava_gear_ids)
@@ -1836,16 +2093,16 @@ def edit_bike_page(request: Request, bike_id: int):
 @app.post("/bikes/{bike_id}/edit")
 async def update_bike(
     bike_id: int, name: str | None = Form(None), identifier: str | None = Form(None), bike_type: str | None = Form(None),
-    owner_name: str | None = Form(None),
+    frame_number: str | None = Form(None), details_markdown: str | None = Form(None),
     starting_mileage_km: str | None = Form(None),
     photo: UploadFile | None = File(None),
     shifting_ant_device_number: str | None = Form(None), bike_power_ant_device_number: str | None = Form(None),
     seatpost_ant_device_number: str | None = Form(None),
     strava_gear_ids: list[str] = Form([]),
 ):
-    if not name or not identifier or not bike_type or not owner_name:
+    if not name or not identifier or not bike_type:
         return RedirectResponse(
-            f"/bikes/{bike_id}/edit?" + urlencode({"notice": "Name, identifier, bike type, and owner are required."}),
+            f"/bikes/{bike_id}/edit?" + urlencode({"notice": "Name, identifier, and bike type are required."}),
             status_code=303,
         )
     if bike_type not in BIKE_TYPES:
@@ -1856,9 +2113,10 @@ async def update_bike(
     try:
         starting_mileage_m = max(0, float(starting_mileage_km or "0") * 1000)
         component_ant_ids = component_ant_ids_from_form(locals())
-    except ValueError:
+        cleaned_frame_number, cleaned_details_markdown = bike_configuration_fields(frame_number, details_markdown)
+    except ValueError as error:
         return RedirectResponse(
-            f"/bikes/{bike_id}/edit?" + urlencode({"notice": "Starting tracked mileage must be a non-negative number."}),
+            f"/bikes/{bike_id}/edit?" + urlencode({"notice": str(error)}),
             status_code=303,
         )
     with connection() as db:
@@ -1881,8 +2139,10 @@ async def update_bike(
         except ValueError as error:
             return RedirectResponse(f"/bikes/{bike_id}/edit?" + urlencode({"notice": str(error)}), status_code=303)
         db.execute(
-            "UPDATE bikes SET name = ?, identifier = ?, bike_type = ?, owner_name = ?, photo_filename = ?, starting_mileage_m = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?",
-            (name.strip(), identifier.strip(), bike_type.strip(), owner_name.strip(), photo_filename, starting_mileage_m, bike_id),
+            """UPDATE bikes SET name=?, identifier=?, bike_type=?, frame_number=?, details_markdown=?, photo_filename=?,
+               starting_mileage_m=?, updated_at=CURRENT_TIMESTAMP WHERE id=?""",
+            (name.strip(), identifier.strip(), bike_type.strip(), cleaned_frame_number, cleaned_details_markdown,
+             photo_filename, starting_mileage_m, bike_id),
         )
         save_bike_components(db, bike_id, component_ant_ids)
         save_bike_strava_gears(db, bike_id, strava_gear_ids)

@@ -23,8 +23,35 @@ from .fit_hardware import extract_device_info
 from .database import connection
 
 
-SYNC_INTERVAL_SECONDS = int(os.getenv("SYNC_INTERVAL_SECONDS", "300"))
+try:
+    DEFAULT_SYNC_INTERVAL_SECONDS = int(os.getenv("SYNC_INTERVAL_SECONDS", "300"))
+except ValueError:
+    DEFAULT_SYNC_INTERVAL_SECONDS = 300
+DEFAULT_SYNC_INTERVAL_SECONDS = max(60, min(86_400, DEFAULT_SYNC_INTERVAL_SECONDS))
 _stop = threading.Event()
+_scheduler_wake = threading.Event()
+
+
+def scheduler_configuration() -> tuple[bool, int]:
+    """Read the persistent scheduler setting, falling back to the deployment default."""
+    with connection() as db:
+        row = db.execute(
+            "SELECT scheduler_enabled, scheduler_interval_seconds FROM user_settings ORDER BY user_id LIMIT 1"
+        ).fetchone()
+    if row is None:
+        return True, DEFAULT_SYNC_INTERVAL_SECONDS
+    enabled = bool(row["scheduler_enabled"])
+    interval = row["scheduler_interval_seconds"] or DEFAULT_SYNC_INTERVAL_SECONDS
+    try:
+        interval = int(interval)
+    except (TypeError, ValueError):
+        interval = DEFAULT_SYNC_INTERVAL_SECONDS
+    return enabled, max(60, min(86_400, interval))
+
+
+def notify_scheduler_settings_changed() -> None:
+    """Wake the background loop so a saved Settings change takes effect immediately."""
+    _scheduler_wake.set()
 
 
 def store_fit_hardware(db: Any, provider_activity_id: int, fit_bytes: bytes) -> list[dict[str, Any]]:
@@ -1368,8 +1395,11 @@ def sync_all_connections(errors: list[str] | None = None) -> int:
 
 def sync_loop() -> None:
     while not _stop.is_set():
-        sync_all_connections()
-        _stop.wait(SYNC_INTERVAL_SECONDS)
+        enabled, interval_seconds = scheduler_configuration()
+        if enabled:
+            sync_all_connections()
+        _scheduler_wake.wait(interval_seconds)
+        _scheduler_wake.clear()
 
 
 def start_sync_loop() -> None:

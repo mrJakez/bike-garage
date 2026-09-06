@@ -22,7 +22,7 @@
       <div class="dashboard-bike-copy">
         <span class="dashboard-bike-type">{{ bike.bike_type }}</span>
         <h3>{{ bike.name }}</h3>
-        <p>{{ bike.identifier }} · {{ bike.owner_name }}</p>
+        <p>{{ bike.identifier }}{% if bike.frame_number %} · Frame {{ bike.frame_number }}{% endif %}</p>
       </div>
       <div class="dashboard-mileage">
         <strong>{{ ((bike.total_mileage_m or 0) / 1000)|km }} <small>km</small></strong>

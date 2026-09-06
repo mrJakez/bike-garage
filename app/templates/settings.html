@@ -1,6 +1,17 @@
 {% extends "base.html" %}
 {% block title %}Settings · Bike Garage{% endblock %}
 {% block content %}
+<p class="eyebrow">AUTOMATION</p>
+<div class="page-heading"><div><h1>Import scheduler</h1><p class="lead">Control automatic provider imports for this Bike Garage.</p></div></div>
+<section class="card settings-card scheduler-settings">
+  <div class="scheduler-state {{ 'is-enabled' if scheduler_enabled else 'is-disabled' }}"><strong>{{ 'Active' if scheduler_enabled else 'Disabled' }}</strong><span>{% if scheduler_enabled %}Imports run automatically every {{ scheduler_interval_minutes }} minute{% if scheduler_interval_minutes != 1 %}s{% endif %}.{% else %}Automatic imports are paused; Sync now remains available under Activities.{% endif %}</span></div>
+  <form method="post" action="/settings/scheduler">
+    <label class="scheduler-toggle"><input type="checkbox" name="enabled" value="1"{% if scheduler_enabled %} checked{% endif %}><span><strong>Enable automatic imports</strong><small>When enabled, connected provider accounts synchronize in the background.</small></span></label>
+    <label>Import interval <span class="input-suffix"><input name="interval_minutes" type="number" min="1" max="1440" value="{{ scheduler_interval_minutes }}" required><b>minutes</b></span></label>
+    <p class="field-help">Changes take effect immediately. The interval is stored in the database; <code>SYNC_INTERVAL_SECONDS</code> remains the initial deployment default.</p>
+    <button type="submit">Save scheduler</button>
+  </form>
+</section>
 <p class="eyebrow">SETTINGS</p>
 <div class="page-heading"><div><h1>Garage start</h1><p class="lead">Choose when Bike Garage begins managing your activities and mileage.</p></div></div>
 <section class="card settings-card">
@@ -26,5 +37,5 @@
   <p class="settings-status-copy"><strong>No passkey configured</strong><span>Enable passkey registration in the container environment to initialize it.</span></p>
   {% endif %}
 </section>
-<style>.settings-card{max-width:720px}.settings-card h2{margin-top:0}.settings-card form{display:grid;gap:12px;margin-top:20px}.settings-card label{display:grid;gap:7px;font-weight:700}.settings-card input{max-width:340px;padding:11px 12px;border:1px solid var(--line);border-radius:8px;background:#fff;font:inherit}.settings-card button{justify-self:start}.settings-status{display:grid;gap:5px;max-width:720px;background:#e8f2ed;border-color:#b9d8c8}.settings-status strong{color:var(--green)}.settings-status span,.settings-status-copy span{color:var(--muted);font-size:.88rem}.settings-status.is-paused{background:#fff8ec;border-color:#e5c38e}.settings-status.is-paused strong{color:#9a621b}.passkey-settings{margin-top:22px}.settings-status-copy{display:grid;gap:4px}.settings-status-copy strong{color:var(--green)}.passkey-settings .secondary{margin-top:4px}</style>
+<style>.settings-card{max-width:720px}.settings-card h2{margin-top:0}.settings-card form{display:grid;gap:12px;margin-top:20px}.settings-card label{display:grid;gap:7px;font-weight:700}.settings-card input{max-width:340px;padding:11px 12px;border:1px solid var(--line);border-radius:8px;background:#fff;font:inherit}.settings-card button{justify-self:start}.settings-status{display:grid;gap:5px;max-width:720px;background:#e8f2ed;border-color:#b9d8c8}.settings-status strong{color:var(--green)}.settings-status span,.settings-status-copy span{color:var(--muted);font-size:.88rem}.settings-status.is-paused{background:#fff8ec;border-color:#e5c38e}.settings-status.is-paused strong{color:#9a621b}.passkey-settings{margin-top:22px}.settings-status-copy{display:grid;gap:4px}.settings-status-copy strong{color:var(--green)}.passkey-settings .secondary{margin-top:4px}.scheduler-settings{display:grid;gap:20px}.scheduler-state{display:grid;gap:3px;padding:12px 14px;border:1px solid var(--line);border-left:4px solid var(--muted);border-radius:9px;background:#f7f6f1}.scheduler-state strong{font-size:.88rem}.scheduler-state span{color:var(--muted);font-size:.82rem}.scheduler-state.is-enabled{border-left-color:var(--green);background:#edf6f0}.scheduler-state.is-disabled{border-left-color:#9e7140;background:#f8f2e8}.scheduler-settings form{display:grid;gap:15px}.scheduler-toggle{display:grid!important;grid-template-columns:auto 1fr;align-items:start;gap:10px;padding:12px;border:1px solid var(--line);border-radius:9px;background:#fff}.scheduler-toggle input{width:18px;height:18px;margin:2px 0 0}.scheduler-toggle span{display:grid;gap:2px}.scheduler-toggle small{color:var(--muted);font-weight:400;font-size:.8rem}.scheduler-settings .input-suffix{display:grid;grid-template-columns:1fr auto;align-items:stretch;max-width:260px}.scheduler-settings .input-suffix input{border-radius:8px 0 0 8px}.scheduler-settings .input-suffix b{display:grid;place-items:center;padding:0 11px;border:1px solid #cfcac0;border-left:0;border-radius:0 8px 8px 0;background:#f4f2ec;color:var(--muted);font-size:.82rem}</style>
 {% endblock %}
