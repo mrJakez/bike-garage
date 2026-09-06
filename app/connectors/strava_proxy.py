@@ -102,6 +102,18 @@ def fetch_activities(endpoint_url: str, api_key: str | None, account_identifier:
     return [item for item in payload if isinstance(item, dict)]
 
 
+def fetch_activity(endpoint_url: str, api_key: str | None, account_identifier: str, activity_id: str) -> dict:
+    """Fetch the current full detail record for one Strava activity through the proxy."""
+    payload = _authenticated_request(
+        endpoint_url,
+        api_key,
+        f"{quote(account_identifier, safe='')}/activities/{quote(str(activity_id), safe='')}",
+    )
+    if not isinstance(payload, dict):
+        raise ValueError("The proxy activity detail endpoint returned an unexpected response.")
+    return payload
+
+
 def _authenticated_request(endpoint_url: str, api_key: str | None, path: str, *, method: str = "GET",
                            payload: dict | None = None, timeout_seconds: int = 15) -> dict | list:
     base_url = normalise_base_url(endpoint_url)

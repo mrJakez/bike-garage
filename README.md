@@ -29,6 +29,10 @@ Open `/register` and create the passkey. Then set
 `BIKE_GARAGE_PASSKEY_REGISTRATION_ENABLED=false` and restart the container.
 From then on, every page requires that passkey. `localhost` works for local
 setup; a NAS deployment needs HTTPS and the matching public hostname above.
+Sessions use a persistent, HTTP-only browser cookie and are valid for up to ten
+years unless you log out. Set `BIKE_GARAGE_SESSION_SECRET` on a NAS; local
+development automatically persists a fallback secret in `data/` so rebuilds do
+not invalidate the login.
 
 ## NAS reverse proxy
 

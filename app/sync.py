@@ -4,12 +4,13 @@ import json
 import ast
 import re
 import difflib
+import math
 import os
 import threading
 import time
 import uuid
 from datetime import datetime, timezone
-from typing import Any
+from typing import Any, Callable
 from urllib.error import HTTPError, URLError
 
 from .connectors.strava_proxy import fetch_activities
@@ -379,6 +380,58 @@ def display_started_at(activity: dict[str, Any], provider_type: str | None) -> s
         return str(value).removesuffix("Z")
 
 
+def provider_endpoint(source: object, endpoint: str) -> tuple[float, float] | None:
+    """Read a provider activity's GPS endpoint from common provider payload shapes."""
+    row = source.row if isinstance(source, ProviderActivity) else source if isinstance(source, dict) else {}
+    if not row:
+        return None
+    try:
+        payload = json.loads(row.get("raw_json") or "{}") if isinstance(row, dict) else {}
+    except (TypeError, json.JSONDecodeError):
+        return None
+    aliases = (f"{endpoint}_latlng", f"{endpoint}LatLng", f"{endpoint}_location")
+    value = next((payload.get(key) for key in aliases if payload.get(key) is not None), None)
+    if value is None:
+        nested = payload.get("raw_strava") or payload.get("raw_hammerhead") or {}
+        nested = nested if isinstance(nested, dict) else {}
+        value = next((nested.get(key) for key in aliases if nested.get(key) is not None), None)
+    try:
+        if isinstance(value, dict):
+            return float(value.get("lat") or value.get("latitude")), float(value.get("lng") or value.get("longitude"))
+        if isinstance(value, (list, tuple)) and len(value) >= 2:
+            return float(value[0]), float(value[1])
+    except (TypeError, ValueError):
+        return None
+    return None
+
+
+def geo_distance_meters(point: tuple[float, float] | None, latitude: object, longitude: object) -> float | None:
+    """Return a great-circle distance in metres, or null when GPS data is unavailable."""
+    if point is None:
+        return None
+    try:
+        target_latitude, target_longitude = float(latitude), float(longitude)
+    except (TypeError, ValueError):
+        return None
+    latitude_1, longitude_1 = map(math.radians, point)
+    latitude_2, longitude_2 = map(math.radians, (target_latitude, target_longitude))
+    delta_latitude, delta_longitude = latitude_2 - latitude_1, longitude_2 - longitude_1
+    arc = math.sin(delta_latitude / 2) ** 2 + math.cos(latitude_1) * math.cos(latitude_2) * math.sin(delta_longitude / 2) ** 2
+    return 6_371_000 * 2 * math.atan2(math.sqrt(arc), math.sqrt(1 - arc))
+
+
+def endpoint_distance(source: object, endpoint: str, latitude: object, longitude: object) -> float | None:
+    return geo_distance_meters(provider_endpoint(source, endpoint), latitude, longitude)
+
+
+def endpoint_within(source: object, endpoint: str, latitude: object, longitude: object, radius_meters: object) -> bool:
+    distance = endpoint_distance(source, endpoint, latitude, longitude)
+    try:
+        return distance is not None and distance <= float(radius_meters)
+    except (TypeError, ValueError):
+        return False
+
+
 def import_connection(connection_row: Any) -> int:
     with connection() as db:
         if connection_row["provider_type"] == "HAMMERHEAD":
@@ -475,10 +528,12 @@ def import_connection(connection_row: Any) -> int:
                 # Exclude its current canonical Activity. Otherwise an exact
                 # self-match wins before we can compare the record to another
                 # provider's near-identical activity.
-                canonical_id = find_matching_canonical(db, activity, started, exclude_ids=previous_ids)
+                canonical_id = find_matching_canonical(
+                    db, activity, started, exclude_ids=previous_ids, source_connection_id=connection_row["id"],
+                )
                 if canonical_id is None:
                     canonical_id = previous_ids[0] if previous_ids else find_or_create_canonical(
-                        db, activity, started, displayed_start_at=displayed_start
+                        db, activity, started, displayed_start_at=displayed_start, source_connection_id=connection_row["id"],
                     )
                 db.execute("DELETE FROM activity_provider_links WHERE provider_activity_id = ?", (exists["id"],))
                 db.execute("INSERT OR IGNORE INTO activity_provider_links (activity_id, provider_activity_id) VALUES (?, ?)", (canonical_id, exists["id"]))
@@ -516,7 +571,9 @@ def import_connection(connection_row: Any) -> int:
                 ),
             )
             provider_activity_id = cursor.lastrowid
-            canonical_id = find_or_create_canonical(db, activity, started, displayed_start_at=displayed_start)
+            canonical_id = find_or_create_canonical(
+                db, activity, started, displayed_start_at=displayed_start, source_connection_id=connection_row["id"],
+            )
             db.execute(
                 "INSERT OR IGNORE INTO activity_provider_links (activity_id, provider_activity_id) VALUES (?, ?)",
                 (canonical_id, provider_activity_id),
@@ -689,7 +746,20 @@ def evaluate_expression(expression: str, context: ActivityContext, logs: list[st
     try:
         names = {"activity": context, "bikes": context.availableBikes, "provider_activity_count": context.providerActivities.count,
                  "hammerhead_activity_count": context.providerActivities.filter(provider="HAMMERHEAD").count}
-        functions = {"max": max, "min": min, "coalesce": lambda *values: next((value for value in values if value not in (None, "")), ""), "print": lambda *args: (logs.extend(str(a) for a in args) if logs is not None else None) or 0}
+        functions = {
+            "max": max,
+            "min": min,
+            "coalesce": lambda *values: next((value for value in values if value not in (None, "")), ""),
+            "print": lambda *args: (logs.extend(str(a) for a in args) if logs is not None else None) or 0,
+            "startDistanceTo": lambda source, latitude, longitude: endpoint_distance(source, "start", latitude, longitude),
+            "endDistanceTo": lambda source, latitude, longitude: endpoint_distance(source, "end", latitude, longitude),
+            "startsWithin": lambda source, latitude, longitude, radius_meters: endpoint_within(source, "start", latitude, longitude, radius_meters),
+            "endsWithin": lambda source, latitude, longitude, radius_meters: endpoint_within(source, "end", latitude, longitude, radius_meters),
+            "endpointsWithin": lambda source, start_latitude, start_longitude, end_latitude, end_longitude, radius_meters: (
+                endpoint_within(source, "start", start_latitude, start_longitude, radius_meters)
+                and endpoint_within(source, "end", end_latitude, end_longitude, radius_meters)
+            ),
+        }
         lines: list[str] = []
         indents: list[int] = []
         pending = ""
@@ -989,7 +1059,10 @@ def validate_expression(expression: str) -> bool:
                     "hardware", "antDeviceNumber", "componentType", "manufacturer", "serialNumber", "component"
                 ):
                     return False
-                if isinstance(node, ast.Name) and node.id not in ("activity", "bikes", "provider_activity_count", "hammerhead_activity_count", "max", "min", "coalesce", "print"):
+                if isinstance(node, ast.Name) and node.id not in (
+                    "activity", "bikes", "provider_activity_count", "hammerhead_activity_count", "max", "min", "coalesce", "print",
+                    "startDistanceTo", "endDistanceTo", "startsWithin", "endsWithin", "endpointsWithin",
+                ):
                     if node.id not in local_names: return False
         return True
     except (SyntaxError, ValueError, TypeError):
@@ -1003,7 +1076,7 @@ def expression_error(expression: str) -> str:
         return limit_error
     raw_lines = expression.splitlines()
     declared = {"activity", "bikes", "provider_activity_count", "hammerhead_activity_count",
-                "max", "min", "coalesce", "print"}
+                "max", "min", "coalesce", "print", "startDistanceTo", "endDistanceTo", "startsWithin", "endsWithin", "endpointsWithin"}
     allowed_properties = {
         "providerActivities", "count", "filter", "first", "title", "provider", "account", "connection",
         "sportType", "distance", "startedAt", "json", "bikeCount", "bikes", "availableBikes", "identifier",
@@ -1109,7 +1182,10 @@ def expression_error(expression: str) -> str:
     return "Invalid expression: check syntax, property names, and declared variables."
 
 
-def find_matching_canonical(db: Any, activity: dict[str, Any], started: int | None, *, exclude_ids: list[int] | None = None) -> int | None:
+def find_matching_canonical(
+    db: Any, activity: dict[str, Any], started: int | None, *, exclude_ids: list[int] | None = None,
+    source_connection_id: int | None = None,
+) -> int | None:
     distance = float(activity.get("distance") or 0)
     excluded = exclude_ids or []
     exclusion = f" AND id NOT IN ({','.join('?' for _ in excluded)})" if excluded else ""
@@ -1127,6 +1203,16 @@ def find_matching_canonical(db: Any, activity: dict[str, Any], started: int | No
     ).fetchall()
     for candidate in candidates:
         if started is None or candidate["started_at_epoch"] is None:
+            continue
+        # One source feed is authoritative about its own individual rides.
+        # Similar timestamps from two records in the same connection are not
+        # corroborating evidence of one ride and must remain distinct.
+        if source_connection_id is not None and db.execute(
+            """SELECT 1 FROM activity_provider_links apl
+               JOIN provider_activities pa ON pa.id=apl.provider_activity_id
+               WHERE apl.activity_id=? AND pa.connection_id=? LIMIT 1""",
+            (candidate["id"], source_connection_id),
+        ).fetchone() is not None:
             continue
         candidate_distance = float(candidate["distance_m"] or 0)
         tolerance = max(1000.0, distance * 0.05)
@@ -1209,9 +1295,10 @@ def refresh_all_canonical_timings() -> None:
 
 
 def find_or_create_canonical(
-    db: Any, activity: dict[str, Any], started: int | None, *, displayed_start_at: str | None = None
+    db: Any, activity: dict[str, Any], started: int | None, *, displayed_start_at: str | None = None,
+    source_connection_id: int | None = None,
 ) -> int:
-    canonical_id = find_matching_canonical(db, activity, started)
+    canonical_id = find_matching_canonical(db, activity, started, source_connection_id=source_connection_id)
     if canonical_id is not None:
         return canonical_id
     distance = float(activity.get("distance") or 0)
@@ -1308,7 +1395,7 @@ def reconcile_single_source_activities() -> int:
     with connection() as db:
         candidates = db.execute(
             """
-            SELECT a.id AS activity_id, pa.sport_type, pa.distance_m, pa.started_at, pa.started_at_epoch
+            SELECT a.id AS activity_id, pa.connection_id, pa.sport_type, pa.distance_m, pa.started_at, pa.started_at_epoch
             FROM activities a
             JOIN activity_provider_links apl ON apl.activity_id = a.id
             JOIN provider_activities pa ON pa.id = apl.provider_activity_id
@@ -1326,7 +1413,7 @@ def reconcile_single_source_activities() -> int:
                 db,
                 {"sport_type": candidate["sport_type"], "distance": candidate["distance_m"]},
                 candidate["started_at_epoch"],
-                exclude_ids=[source_id],
+                exclude_ids=[source_id], source_connection_id=candidate["connection_id"],
             )
             if target_id is None:
                 continue
@@ -1369,27 +1456,90 @@ def reconcile_single_source_activities() -> int:
     return merged
 
 
-def sync_all_connections(errors: list[str] | None = None) -> int:
+def separate_same_connection_sources() -> int:
+    """Split legacy canonical activities that contain multiple records from one connection.
+
+    A provider connection's feed is a list of distinct rides.  Therefore it
+    cannot supply two sources for one canonical activity, even if timestamps
+    and distances happen to fall inside the cross-provider matching window.
+    """
+    separated = 0
+    with connection() as db:
+        duplicates = db.execute(
+            """SELECT apl.activity_id, pa.connection_id
+               FROM activity_provider_links apl
+               JOIN provider_activities pa ON pa.id=apl.provider_activity_id
+               GROUP BY apl.activity_id, pa.connection_id
+               HAVING COUNT(*) > 1"""
+        ).fetchall()
+        for duplicate in duplicates:
+            activity_id = duplicate["activity_id"]
+            sources = db.execute(
+                """SELECT pa.* FROM activity_provider_links apl
+                   JOIN provider_activities pa ON pa.id=apl.provider_activity_id
+                   WHERE apl.activity_id=? AND pa.connection_id=?
+                   ORDER BY pa.started_at_epoch ASC, pa.id ASC""",
+                (activity_id, duplicate["connection_id"]),
+            ).fetchall()
+            # Keep the earliest source on the existing canonical record; it
+            # may already be corroborated by another provider. Every further
+            # record becomes its own canonical activity and is rule-resolved.
+            for source in sources[1:]:
+                cursor = db.execute(
+                    """INSERT INTO activities (public_id, name, sport_type, started_at, started_at_epoch, distance_m)
+                       VALUES (?, ?, ?, ?, ?, ?)""",
+                    (str(uuid.uuid4()), source["name"] or "Unnamed activity", source["sport_type"],
+                     source["started_at"], source["started_at_epoch"], source["distance_m"]),
+                )
+                split_activity_id = cursor.lastrowid
+                db.execute("DELETE FROM activity_provider_links WHERE activity_id=? AND provider_activity_id=?", (activity_id, source["id"]))
+                db.execute(
+                    "INSERT INTO activity_provider_links (activity_id, provider_activity_id) VALUES (?, ?)",
+                    (split_activity_id, source["id"]),
+                )
+                apply_rule(db, split_activity_id, source["sport_type"], None)
+                separated += 1
+            refresh_canonical_timing(db, activity_id)
+    return separated
+
+
+def sync_all_connections(
+    errors: list[str] | None = None, progress: Callable[[str], None] | None = None,
+) -> int:
+    """Synchronize every active connection and optionally report human-readable progress."""
+    def report(message: str) -> None:
+        if progress is not None:
+            progress(message)
+
     total = 0
     with connection() as db:
         connections = db.execute(
             "SELECT * FROM provider_connections WHERE provider_type IN ('STRAVA_PROXY', 'HAMMERHEAD') AND status = 'CONNECTED'"
         ).fetchall()
-    for provider_connection in connections:
+    if not connections:
+        report("No active provider connections found.")
+    for index, provider_connection in enumerate(connections, start=1):
+        label = provider_connection["display_name"] or provider_connection["external_account_id"] or provider_connection["provider_type"]
+        report(f"Fetching activities from {label} ({index}/{len(connections)})…")
         try:
-            total += import_connection(provider_connection)
+            imported = import_connection(provider_connection)
+            total += imported
+            report(f"{label}: activity feed processed; {imported} new activity{'ies' if imported != 1 else ''} imported.")
         except Exception as error:
             # A single unavailable account must not stop the other connections.
+            report(f"{label}: unavailable; continuing with the remaining connections.")
             if errors is not None:
-                label = provider_connection["display_name"] or provider_connection["external_account_id"] or provider_connection["provider_type"]
                 account = provider_connection["external_account_id"]
                 suffix = f" ({account})" if account else ""
                 errors.append(f"{label}{suffix}: {error}")
             continue
+    report("Reconciling provider records and applying rules…")
     repair_hammerhead_start_times()
     repair_strava_local_start_times()
+    separate_same_connection_sources()
     refresh_all_canonical_timings()
     reconcile_single_source_activities()
+    report("Activity records are up to date.")
     return total
 
 

@@ -3,8 +3,10 @@ from __future__ import annotations
 import json
 from concurrent.futures import ThreadPoolExecutor, as_completed
 import os
+from queue import Queue
 import secrets
 import re
+from threading import Thread
 import time
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
@@ -12,12 +14,12 @@ from urllib.parse import parse_qs, urlencode
 from zoneinfo import ZoneInfo
 
 from fastapi import FastAPI, File, Form, Request, UploadFile
-from fastapi.responses import FileResponse, JSONResponse, RedirectResponse, Response
+from fastapi.responses import FileResponse, JSONResponse, RedirectResponse, Response, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from starlette.middleware.sessions import SessionMiddleware
 
-from .connectors.strava_proxy import fetch_bikes as fetch_strava_bikes, health_check, normalise_base_url, test_connection, update_activity_gear as update_strava_activity_gear
+from .connectors.strava_proxy import fetch_activity as fetch_strava_activity, fetch_bikes as fetch_strava_bikes, health_check, normalise_base_url, test_connection, update_activity_gear as update_strava_activity_gear
 from .connectors.hammerhead import DEFAULT_API_BASE_URL, authorization_url as hammerhead_authorization_url, exchange_code as exchange_hammerhead_code, fetch_activity_detail as fetch_hammerhead_activity_detail, fetch_activity_fit as fetch_hammerhead_activity_fit, normalise_base_url as normalise_hammerhead_base_url, test_connection as test_hammerhead_connection
 from .database import connection, initial_user, initialise_database
 from .auth import complete_authentication, complete_registration, has_passkey, issue_authentication_options, issue_registration_options, registration_enabled
@@ -27,6 +29,7 @@ from .sync import ActivityContext, apply_rule, attach_hardware_observations, exp
 APP_ROOT = Path(__file__).parent
 PHOTO_ROOT = Path(os.getenv("DATABASE_PATH", "data/bike-garage.db")).parent / "bike-photos"
 PHOTO_ROOT.mkdir(parents=True, exist_ok=True)
+SESSION_SECRET_PATH = PHOTO_ROOT.parent / ".bike-garage-session-secret"
 templates = Jinja2Templates(directory=str(APP_ROOT / "templates"))
 LOCAL_TIMEZONE = ZoneInfo("Europe/Berlin")
 
@@ -34,6 +37,24 @@ LOCAL_TIMEZONE = ZoneInfo("Europe/Berlin")
 def public_origin(request: Request) -> str:
     """Use the explicit external HTTPS origin when the app is behind a proxy."""
     return os.getenv("BIKE_GARAGE_PUBLIC_ORIGIN", "").strip().rstrip("/") or str(request.base_url).rstrip("/")
+
+
+def session_secret() -> str:
+    """Keep local sessions valid across rebuilds when no explicit secret is configured."""
+    configured = os.getenv("BIKE_GARAGE_SESSION_SECRET", "").strip()
+    if configured:
+        return configured
+    try:
+        return SESSION_SECRET_PATH.read_text(encoding="utf-8").strip()
+    except FileNotFoundError:
+        secret = secrets.token_urlsafe(48)
+        try:
+            descriptor = os.open(SESSION_SECRET_PATH, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+        except FileExistsError:
+            return SESSION_SECRET_PATH.read_text(encoding="utf-8").strip()
+        with os.fdopen(descriptor, "w", encoding="utf-8") as secret_file:
+            secret_file.write(secret)
+        return secret
 
 
 def format_activity_datetime(value: object) -> str:
@@ -131,7 +152,8 @@ async def require_passkey(request: Request, call_next):
 
 app.add_middleware(
     SessionMiddleware,
-    secret_key=os.getenv("BIKE_GARAGE_SESSION_SECRET", "") or secrets.token_urlsafe(32),
+    secret_key=session_secret(),
+    max_age=60 * 60 * 24 * 3650,
     same_site="lax",
     https_only=os.getenv("BIKE_GARAGE_PASSKEY_ORIGIN", "").startswith("https://"),
 )
@@ -862,9 +884,20 @@ def provider_transfer_record(row: object) -> dict[str, object]:
     return record
 
 
-@app.post("/providers/export-and-deactivate")
-def export_and_deactivate_provider_connections():
-    """Download credentials for a controlled environment move, then stop syncing here."""
+def connection_can_be_activated(row: object) -> bool:
+    """Only activate a saved connection when it still has the credentials to sync."""
+    if not row["endpoint_url"]:
+        return False
+    if row["provider_type"] == "STRAVA_PROXY":
+        return bool(row["access_token"])
+    if row["provider_type"] == "HAMMERHEAD":
+        return bool(row["oauth_client_id"] and row["oauth_client_secret"] and (row["access_token"] or row["refresh_token"]))
+    return False
+
+
+@app.post("/settings/providers/export")
+def export_provider_connections():
+    """Download the credential-bearing provider configuration for a trusted move."""
     user = initial_user()
     with connection() as db:
         rows = db.execute(
@@ -874,19 +907,13 @@ def export_and_deactivate_provider_connections():
             (user["id"],),
         ).fetchall()
         if not rows:
-            return RedirectResponse("/providers?notice=No+saved+provider+connections+to+export", status_code=303)
+            return RedirectResponse("/settings?notice=No+saved+provider+connections+to+export", status_code=303)
         export_document = {
             "format": "bike-garage-provider-connections",
             "version": 1,
             "exported_at": datetime.now(UTC).isoformat(),
             "connections": [provider_transfer_record(row) for row in rows],
         }
-        db.execute(
-            """UPDATE provider_connections
-               SET status='DISCONNECTED', oauth_state=NULL, updated_at=CURRENT_TIMESTAMP
-               WHERE user_id=? AND provider_type IN ('STRAVA_PROXY', 'HAMMERHEAD')""",
-            (user["id"],),
-        )
     filename = f"bike-garage-connections-{datetime.now(UTC).strftime('%Y%m%d-%H%M%S')}.json"
     return Response(
         content=json.dumps(export_document, indent=2) + "\n",
@@ -898,7 +925,7 @@ def export_and_deactivate_provider_connections():
     )
 
 
-@app.post("/providers/import")
+@app.post("/settings/providers/import")
 async def import_provider_connections(archive: UploadFile = File(...)):
     """Import a previously exported provider credential archive and activate it here."""
     try:
@@ -914,7 +941,7 @@ async def import_provider_connections(archive: UploadFile = File(...)):
         if len(records) > 100:
             raise ValueError("The export contains too many connections.")
     except (UnicodeDecodeError, json.JSONDecodeError, ValueError) as error:
-        return RedirectResponse("/providers?" + urlencode({"notice": f"Import failed: {error}"}), status_code=303)
+        return RedirectResponse("/settings?" + urlencode({"notice": f"Import failed: {error}"}), status_code=303)
 
     imported: list[dict[str, object]] = []
     identifiers: set[str] = set()
@@ -948,15 +975,10 @@ async def import_provider_connections(archive: UploadFile = File(...)):
             copied["display_name"] = display_name.strip()
             copied["identifier"] = identifier
             copied["activity_types_json"] = json.dumps(activity_types)
-            has_credentials = (
-                bool(copied["endpoint_url"])
-                and (bool(copied["access_token"]) if provider_type == "STRAVA_PROXY"
-                     else bool(copied["oauth_client_id"]) and bool(copied["oauth_client_secret"]) and bool(copied["access_token"] or copied["refresh_token"]))
-            )
-            copied["status"] = "CONNECTED" if has_credentials else "NEEDS_CONFIGURATION"
+            copied["status"] = "CONNECTED" if connection_can_be_activated(copied) else "NEEDS_CONFIGURATION"
             imported.append(copied)
     except ValueError as error:
-        return RedirectResponse("/providers?" + urlencode({"notice": f"Import failed: {error}"}), status_code=303)
+        return RedirectResponse("/settings?" + urlencode({"notice": f"Import failed: {error}"}), status_code=303)
 
     user = initial_user()
     created = 0
@@ -991,9 +1013,69 @@ async def import_provider_connections(archive: UploadFile = File(...)):
                 )
                 created += 1
     return RedirectResponse(
-        "/providers?" + urlencode({"notice": f"Imported {created} connection(s); updated {updated}."}),
+        "/settings?" + urlencode({"notice": f"Imported {created} connection(s); updated {updated}."}),
         status_code=303,
     )
+
+
+@app.post("/connections/{connection_id}/activate")
+def activate_provider_connection(connection_id: int):
+    user = initial_user()
+    with connection() as db:
+        provider_connection = db.execute(
+            "SELECT * FROM provider_connections WHERE id=? AND user_id=?", (connection_id, user["id"])
+        ).fetchone()
+        if provider_connection is None:
+            return RedirectResponse("/providers?notice=Provider+connection+not+found", status_code=303)
+        if not connection_can_be_activated(provider_connection):
+            return RedirectResponse("/providers?notice=Connection+needs+configuration+before+it+can+be+activated", status_code=303)
+        db.execute(
+            "UPDATE provider_connections SET status='CONNECTED', updated_at=CURRENT_TIMESTAMP WHERE id=?",
+            (connection_id,),
+        )
+    return RedirectResponse("/providers?notice=Provider+connection+activated", status_code=303)
+
+
+@app.post("/connections/{connection_id}/deactivate")
+def deactivate_provider_connection(connection_id: int):
+    user = initial_user()
+    with connection() as db:
+        if db.execute(
+            "SELECT 1 FROM provider_connections WHERE id=? AND user_id=?", (connection_id, user["id"])
+        ).fetchone() is None:
+            return RedirectResponse("/providers?notice=Provider+connection+not+found", status_code=303)
+        db.execute(
+            "UPDATE provider_connections SET status='DISCONNECTED', oauth_state=NULL, updated_at=CURRENT_TIMESTAMP WHERE id=?",
+            (connection_id,),
+        )
+    return RedirectResponse("/providers?notice=Provider+connection+deactivated", status_code=303)
+
+
+@app.post("/providers/activate-all")
+def activate_all_provider_connections():
+    user = initial_user()
+    activated = 0
+    with connection() as db:
+        rows = db.execute(
+            "SELECT * FROM provider_connections WHERE user_id=? AND status='DISCONNECTED'", (user["id"],)
+        ).fetchall()
+        for row in rows:
+            if connection_can_be_activated(row):
+                db.execute("UPDATE provider_connections SET status='CONNECTED', updated_at=CURRENT_TIMESTAMP WHERE id=?", (row["id"],))
+                activated += 1
+    return RedirectResponse("/providers?" + urlencode({"notice": f"Activated {activated} provider connection(s)"}), status_code=303)
+
+
+@app.post("/providers/deactivate-all")
+def deactivate_all_provider_connections():
+    user = initial_user()
+    with connection() as db:
+        deactivated = db.execute(
+            """UPDATE provider_connections SET status='DISCONNECTED', oauth_state=NULL, updated_at=CURRENT_TIMESTAMP
+               WHERE user_id=? AND status <> 'DISCONNECTED'""",
+            (user["id"],),
+        ).rowcount
+    return RedirectResponse("/providers?" + urlencode({"notice": f"Deactivated {deactivated} provider connection(s)"}), status_code=303)
 
 
 @app.get("/settings")
@@ -1697,6 +1779,73 @@ def provider_activity_detail(request: Request, provider_activity_id: int):
     return templates.TemplateResponse(request, "provider_activity_detail.html", page_context(request, source=source))
 
 
+@app.get("/provider-activities/{provider_activity_id}/fit")
+def download_hammerhead_fit(provider_activity_id: int):
+    """Download a Hammerhead FIT file without exposing the connection token."""
+    with connection() as db:
+        source = db.execute(
+            """SELECT pa.external_activity_id, pa.name, pc.*
+               FROM provider_activities pa
+               JOIN provider_connections pc ON pc.id=pa.connection_id
+               LEFT JOIN activity_provider_links apl ON apl.provider_activity_id=pa.id
+               LEFT JOIN activities a ON a.id=apl.activity_id
+               WHERE pa.id=? AND pc.provider_type='HAMMERHEAD' AND a.deleted_at IS NULL""",
+            (provider_activity_id,),
+        ).fetchone()
+        if source is None:
+            return RedirectResponse("/activities?notice=Hammerhead+provider+activity+not+found", status_code=303)
+        try:
+            active_connection = refresh_hammerhead_connection_token(db, source)
+            fit_bytes = fetch_hammerhead_activity_fit(
+                active_connection["endpoint_url"], active_connection["access_token"], source["external_activity_id"],
+            )
+        except Exception as error:
+            return RedirectResponse(
+                f"/provider-activities/{provider_activity_id}?" + urlencode({"notice": f"FIT download failed: {error}"}),
+                status_code=303,
+            )
+    filename = f"hammerhead-activity-{source['external_activity_id']}.fit"
+    return Response(
+        fit_bytes,
+        media_type="application/vnd.ant.fit",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
+
+
+@app.post("/provider-activities/{provider_activity_id}/refresh")
+def refresh_strava_provider_activity(provider_activity_id: int):
+    """Explicitly refresh one Strava source without running the full importer."""
+    with connection() as db:
+        source = db.execute(
+            """SELECT pa.id, pa.external_activity_id, pc.endpoint_url, pc.access_token, pc.external_account_id
+               FROM provider_activities pa JOIN provider_connections pc ON pc.id=pa.connection_id
+               WHERE pa.id=? AND pc.provider_type='STRAVA_PROXY'""",
+            (provider_activity_id,),
+        ).fetchone()
+        if source is None:
+            return RedirectResponse("/activities?notice=Strava+provider+activity+not+found", status_code=303)
+        try:
+            payload = fetch_strava_activity(
+                source["endpoint_url"] or "", source["access_token"], source["external_account_id"] or "",
+                source["external_activity_id"],
+            )
+        except Exception as error:
+            return RedirectResponse(
+                f"/provider-activities/{provider_activity_id}?" + urlencode({"notice": f"Strava refresh failed: {error}"}),
+                status_code=303,
+            )
+        db.execute(
+            """UPDATE provider_activities SET name=?, sport_type=?, distance_m=?, raw_json=? WHERE id=?""",
+            (
+                payload.get("name") or "Unnamed activity", payload.get("sport_type") or payload.get("type"),
+                float(payload.get("distance") or 0), json.dumps(payload), provider_activity_id,
+            ),
+        )
+    return RedirectResponse(
+        f"/provider-activities/{provider_activity_id}?notice=Strava+activity+details+refreshed", status_code=303
+    )
+
+
 @app.post("/activities/{activity_uuid}/rules/{rule_id}/test")
 def test_rule_from_activity(activity_uuid: str, rule_id: int):
     """Explicitly test one saved rule against this activity and retain its log."""
@@ -2187,6 +2336,44 @@ def sync_now():
     return RedirectResponse("/activities?" + urlencode({"notice": notice}), status_code=303)
 
 
+@app.get("/sync/progress")
+def sync_progress():
+    """Stream manual-sync milestones so the Activities page stays responsive."""
+    updates: Queue[tuple[str, object]] = Queue()
+
+    def worker() -> None:
+        errors: list[str] = []
+        try:
+            updates.put(("progress", "Preparing provider synchronization…"))
+            imported = sync_all_connections(errors, progress=lambda message: updates.put(("progress", message)))
+            if errors:
+                notice = f"Sync finished with provider errors. Imported {imported} new provider activities."
+            else:
+                with connection() as db:
+                    connected_count = db.execute(
+                        "SELECT COUNT(*) FROM provider_connections WHERE provider_type IN ('STRAVA_PROXY', 'HAMMERHEAD') AND status = 'CONNECTED'"
+                    ).fetchone()[0]
+                notice = ("No active Strava Proxy or Hammerhead connection found."
+                          if connected_count == 0 else f"Sync complete. Imported {imported} new provider activities.")
+            updates.put(("complete", {"notice": notice, "errors": errors}))
+        except Exception:
+            updates.put(("failed", "Sync could not be completed. Please try again."))
+
+    Thread(target=worker, name="bike-garage-manual-sync", daemon=True).start()
+
+    def events():
+        while True:
+            event, payload = updates.get()
+            yield f"event: {event}\ndata: {json.dumps(payload)}\n\n"
+            if event in {"complete", "failed"}:
+                break
+
+    return StreamingResponse(
+        events(), media_type="text/event-stream",
+        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+    )
+
+
 @app.get("/providers/{provider_type}/connect")
 def connect_provider(request: Request, provider_type: str):
     provider = PROVIDERS.get(provider_type)
@@ -2271,16 +2458,18 @@ def test_provider_connection(connection_id: int):
         ).fetchone()
         if provider_connection is None:
             return RedirectResponse("/providers?notice=Provider+connection+not+found", status_code=303)
+        preserve_deactivated_state = provider_connection["status"] == "DISCONNECTED"
         if provider_connection["provider_type"] == "HAMMERHEAD":
             try:
                 provider_connection = refresh_hammerhead_connection_token(db, provider_connection)
             except Exception as error:
                 db.execute(
                     """UPDATE provider_connections
-                       SET status='NEEDS_CONFIGURATION', last_tested_at=CURRENT_TIMESTAMP,
+                       SET status=?, last_tested_at=CURRENT_TIMESTAMP,
                            last_test_status='FAILED', last_test_message=?, updated_at=CURRENT_TIMESTAMP
                        WHERE id=?""",
-                    (f"Hammerhead token refresh failed: {error}", connection_id),
+                    ("DISCONNECTED" if preserve_deactivated_state else "NEEDS_CONFIGURATION",
+                     f"Hammerhead token refresh failed: {error}", connection_id),
                 )
                 return RedirectResponse(
                     "/providers?" + urlencode({"test_connection": connection_id}), status_code=303
@@ -2299,7 +2488,7 @@ def test_provider_connection(connection_id: int):
             WHERE id = ?
             """,
             (
-                "CONNECTED" if result.is_healthy else "NEEDS_CONFIGURATION",
+                "DISCONNECTED" if preserve_deactivated_state else ("CONNECTED" if result.is_healthy else "NEEDS_CONFIGURATION"),
                 "SUCCESS" if result.is_healthy else "FAILED",
                 result.message,
                 result.activity_count,

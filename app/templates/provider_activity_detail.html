@@ -2,6 +2,7 @@
 {% block title %}{{ source.name }} · Provider activity · Bike Garage{% endblock %}
 {% block content %}
 <style>
+  .provider-page-actions{display:flex;align-items:center;justify-content:flex-end;flex-wrap:wrap;gap:8px}.provider-page-actions form{margin:0}.provider-page-actions .button,.provider-refresh-button{padding:9px 12px;font-size:.78rem}.provider-refresh-button{border:1px solid var(--line);background:#fff;color:var(--ink)}.provider-refresh-button:hover{border-color:var(--green);background:#edf6f0;color:var(--green)}
   .provider-detail-grid{display:grid;grid-template-columns:minmax(0,1.1fr) minmax(320px,.9fr);gap:18px;align-items:start}
   .provider-breadcrumb a{color:var(--green);text-decoration:none}.provider-breadcrumb a:hover{text-decoration:underline}
   .provider-meta{display:grid;gap:0;margin:0}.provider-meta div{display:grid;grid-template-columns:minmax(130px,.7fr) 1.3fr;gap:14px;padding:11px 0;border-bottom:1px solid var(--line)}.strava-activity-link{display:inline-flex;align-items:center;gap:7px;color:var(--green);font-weight:750;text-decoration:none}.strava-activity-link:hover{text-decoration:underline}.strava-activity-link::after{content:'↗';font-size:.9em}.strava-gear-name{display:block}.strava-gear-name code{font-size:.78rem;color:var(--muted)}.strava-gear-match{display:inline-flex;margin-top:5px;padding:4px 8px;border-radius:999px;background:#e5f2ea;color:#286b50;font-size:.78rem;font-weight:750}.strava-gear-unmatched{display:inline-flex;margin-top:5px;padding:4px 8px;border-radius:999px;background:#fff3df;color:#9a5c0e;font-size:.78rem;font-weight:750}
@@ -16,7 +17,7 @@
     <h1>{{ source.name or 'Untitled provider activity' }}</h1>
     <p class="lead">{{ source.connection_name }} · {{ source.provider_type|replace('_', ' ')|title }}</p>
   </div>
-  {% if source.canonical_activity_public_id %}<a class="button secondary" href="/activities/{{ source.canonical_activity_public_id }}">Open activity</a>{% endif %}
+  <div class="provider-page-actions">{% if source.canonical_activity_public_id %}<a class="button secondary" href="/activities/{{ source.canonical_activity_public_id }}">Open activity</a>{% endif %}{% if source.provider_type == 'HAMMERHEAD' and source.external_activity_id %}<a class="button secondary" href="/provider-activities/{{ source.id }}/fit">Download FIT</a>{% endif %}{% if source.provider_type == 'STRAVA_PROXY' and source.external_activity_id %}<a class="button secondary" href="https://www.strava.com/activities/{{ source.external_activity_id }}" target="_blank" rel="noopener noreferrer">Open activity on Strava ↗</a><form method="post" action="/provider-activities/{{ source.id }}/refresh"><button type="submit" class="provider-refresh-button" title="Refresh activity details from Strava">↻ <span>Refresh Strava details</span></button></form>{% endif %}</div>
 </div>
 
 <div class="provider-detail-grid">
@@ -26,7 +27,6 @@
       <div><dt>Connection</dt><dd>{{ source.connection_name }} <code>{{ source.connection_identifier }}</code></dd></div>
       <div><dt>Provider</dt><dd>{{ source.provider_type }}</dd></div>
       <div><dt>Provider activity ID</dt><dd><code>{{ source.external_activity_id }}</code></dd></div>
-      {% if source.provider_type == 'STRAVA_PROXY' and source.external_activity_id %}<div><dt>Strava</dt><dd><a class="strava-activity-link" href="https://www.strava.com/activities/{{ source.external_activity_id }}" target="_blank" rel="noopener noreferrer">Open on Strava</a></dd></div>{% endif %}
       <div><dt>Title</dt><dd>{{ source.name or '—' }}</dd></div>
       <div><dt>Started</dt><dd>{{ source.started_at|activity_datetime }}</dd></div>
       <div><dt>Duration</dt><dd>{{ source.duration_label }}</dd></div>
