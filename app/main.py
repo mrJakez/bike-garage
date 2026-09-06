@@ -21,7 +21,7 @@ from .connectors.strava_proxy import fetch_bikes as fetch_strava_bikes, health_c
 from .connectors.hammerhead import DEFAULT_API_BASE_URL, authorization_url as hammerhead_authorization_url, exchange_code as exchange_hammerhead_code, fetch_activity_detail as fetch_hammerhead_activity_detail, fetch_activity_fit as fetch_hammerhead_activity_fit, normalise_base_url as normalise_hammerhead_base_url, test_connection as test_hammerhead_connection
 from .database import connection, initial_user, initialise_database
 from .auth import complete_authentication, complete_registration, has_passkey, issue_authentication_options, issue_registration_options, registration_enabled
-from .sync import ActivityContext, apply_rule, attach_hardware_observations, expression_error, evaluate_expression, notify_scheduler_settings_changed, refresh_all_canonical_timings, refresh_hammerhead_connection_token, scheduler_configuration, start_sync_loop, store_fit_hardware, sync_all_connections, validate_expression
+from .sync import ActivityContext, apply_rule, attach_hardware_observations, expression_error, evaluate_expression, notify_scheduler_settings_changed, refresh_all_canonical_timings, refresh_hammerhead_connection_token, repair_strava_local_start_times, scheduler_configuration, start_sync_loop, store_fit_hardware, sync_all_connections, validate_expression
 
 
 APP_ROOT = Path(__file__).parent
