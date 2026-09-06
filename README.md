@@ -11,6 +11,24 @@ make dev
 
 Open <http://localhost:8000>.
 
+## Single-user passkey login
+
+Bike Garage supports exactly one local user and one passkey. There are no
+usernames or passwords. To initialize (or deliberately replace) that passkey,
+start the container with these environment variables set for its public URL:
+
+```env
+BIKE_GARAGE_PASSKEY_REGISTRATION_ENABLED=true
+BIKE_GARAGE_SESSION_SECRET=use-a-long-random-value
+BIKE_GARAGE_PASSKEY_RP_ID=bike-garage.example.net
+BIKE_GARAGE_PASSKEY_ORIGIN=https://bike-garage.example.net
+```
+
+Open `/register` and create the passkey. Then set
+`BIKE_GARAGE_PASSKEY_REGISTRATION_ENABLED=false` and restart the container.
+From then on, every page requires that passkey. `localhost` works for local
+setup; a NAS deployment needs HTTPS and the matching public hostname above.
+
 ## Current scope
 
 - SQLite database mounted at `./data/bike-garage.db`.

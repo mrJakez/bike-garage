@@ -1,0 +1,18 @@
+# Deployment on a NAS or other Docker host.
+# Copy this file together with a .env file (see .env.nas.example).
+services:
+  bike-garage:
+    image: ghcr.io/mrjakez/bike-garage:latest
+    container_name: bike-garage
+    restart: unless-stopped
+    ports:
+      - "8000:8000"
+    environment:
+      DATABASE_PATH: /app/data/bike-garage.db
+      SYNC_INTERVAL_SECONDS: ${SYNC_INTERVAL_SECONDS:-300}
+      BIKE_GARAGE_PASSKEY_REGISTRATION_ENABLED: ${BIKE_GARAGE_PASSKEY_REGISTRATION_ENABLED:-false}
+      BIKE_GARAGE_SESSION_SECRET: ${BIKE_GARAGE_SESSION_SECRET:?Set BIKE_GARAGE_SESSION_SECRET in .env}
+      BIKE_GARAGE_PASSKEY_RP_ID: ${BIKE_GARAGE_PASSKEY_RP_ID:?Set the public hostname in .env}
+      BIKE_GARAGE_PASSKEY_ORIGIN: ${BIKE_GARAGE_PASSKEY_ORIGIN:?Set the public HTTPS origin in .env}
+    volumes:
+      - ./data:/app/data

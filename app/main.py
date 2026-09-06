@@ -12,13 +12,15 @@ from urllib.parse import parse_qs, urlencode
 from zoneinfo import ZoneInfo
 
 from fastapi import FastAPI, File, Form, Request, UploadFile
-from fastapi.responses import FileResponse, RedirectResponse, Response
+from fastapi.responses import FileResponse, JSONResponse, RedirectResponse, Response
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
+from starlette.middleware.sessions import SessionMiddleware
 
 from .connectors.strava_proxy import fetch_bikes as fetch_strava_bikes, health_check, normalise_base_url, test_connection, update_activity_gear as update_strava_activity_gear
 from .connectors.hammerhead import DEFAULT_API_BASE_URL, authorization_url as hammerhead_authorization_url, exchange_code as exchange_hammerhead_code, fetch_activity_detail as fetch_hammerhead_activity_detail, fetch_activity_fit as fetch_hammerhead_activity_fit, normalise_base_url as normalise_hammerhead_base_url, test_connection as test_hammerhead_connection
 from .database import connection, initial_user, initialise_database
+from .auth import complete_authentication, complete_registration, has_passkey, issue_authentication_options, issue_registration_options, registration_enabled
 from .sync import ActivityContext, apply_rule, attach_hardware_observations, expression_error, evaluate_expression, refresh_all_canonical_timings, refresh_hammerhead_connection_token, repair_strava_local_start_times, start_sync_loop, store_fit_hardware, sync_all_connections, validate_expression
 
 
@@ -105,6 +107,29 @@ templates.env.filters["log_datetime"] = format_log_datetime
 templates.env.filters["km"] = format_kilometres
 app = FastAPI(title="Bike Garage")
 app.mount("/static", StaticFiles(directory=str(APP_ROOT / "static")), name="static")
+
+
+@app.middleware("http")
+async def require_passkey(request: Request, call_next):
+    """Require a passkey only after the single-user account is initialized."""
+    public_paths = {"/login", "/register", "/auth/login/options", "/auth/login/verify", "/auth/register/options", "/auth/register/verify"}
+    if request.url.path.startswith("/static/") or request.url.path in public_paths:
+        return await call_next(request)
+    with connection() as db:
+        configured = has_passkey(db)
+    if configured and not request.session.get("authenticated"):
+        if request.method == "GET":
+            return RedirectResponse("/login", status_code=303)
+        return JSONResponse({"detail": "Passkey sign-in required."}, status_code=401)
+    return await call_next(request)
+
+
+app.add_middleware(
+    SessionMiddleware,
+    secret_key=os.getenv("BIKE_GARAGE_SESSION_SECRET", "") or secrets.token_urlsafe(32),
+    same_site="lax",
+    https_only=os.getenv("BIKE_GARAGE_PASSKEY_ORIGIN", "").startswith("https://"),
+)
 
 PROVIDERS = {
     "STRAVA_PROXY": {
@@ -379,9 +404,20 @@ def sync_strava_activity_gears(db: object, activity_id: int, provider_activity_i
             )
             continue
         try:
+            current_payload = json.loads(row["raw_json"] or "{}")
+        except (TypeError, json.JSONDecodeError):
+            current_payload = {}
+        note = f"Bike Garage: {row['desired_gear_name']} (Before: {row['current_gear_name']})"
+        existing_description = str(current_payload.get("description") or "").strip()
+        # Do not erase a rider's own activity notes; append one concise audit
+        # line for each actual Bike Garage correction instead.
+        description = existing_description if note in existing_description else (
+            f"{existing_description}\n\n{note}" if existing_description else note
+        )
+        try:
             updated = update_strava_activity_gear(
                 row["endpoint_url"], row["access_token"], row["external_account_id"],
-                row["external_activity_id"], row["desired_gear_id"],
+                row["external_activity_id"], row["desired_gear_id"], description=description,
             )
         except Exception as error:
             record_activity_log(
@@ -390,12 +426,10 @@ def sync_strava_activity_gears(db: object, activity_id: int, provider_activity_i
                 logger="STRAVA",
             )
             continue
-        try:
-            payload = json.loads(row["raw_json"] or "{}")
-        except (TypeError, json.JSONDecodeError):
-            payload = {}
+        payload = current_payload
         payload.update(updated)
         payload["gear_id"] = row["desired_gear_id"]
+        payload["description"] = description
         db.execute("UPDATE provider_activities SET raw_json=? WHERE id=?", (json.dumps(payload), row["provider_activity_id"]))
         old = row["current_gear_name"]
         record_activity_log(
@@ -718,6 +752,83 @@ def reapply_rules_to_all_activities(db: object) -> tuple[int, int]:
     return len(activities), failures
 
 
+@app.get("/login")
+def login_page(request: Request):
+    with connection() as db:
+        configured = has_passkey(db)
+    if request.session.get("authenticated"):
+        return RedirectResponse("/", status_code=303)
+    if not configured and registration_enabled():
+        return RedirectResponse("/register", status_code=303)
+    return templates.TemplateResponse(request, "passkey_login.html", {"configured": configured})
+
+
+@app.get("/register")
+def register_passkey_page(request: Request):
+    if not registration_enabled():
+        return RedirectResponse("/login?notice=Passkey+registration+is+disabled", status_code=303)
+    return templates.TemplateResponse(request, "passkey_register.html", {})
+
+
+@app.post("/auth/register/options")
+def register_passkey_options(request: Request):
+    if not registration_enabled():
+        return JSONResponse({"detail": "Passkey registration is disabled."}, status_code=403)
+    return Response(issue_registration_options(request, initial_user()), media_type="application/json")
+
+
+@app.post("/auth/register/verify")
+async def register_passkey_verify(request: Request):
+    if not registration_enabled():
+        return JSONResponse({"detail": "Passkey registration is disabled."}, status_code=403)
+    try:
+        credential_id, public_key, sign_count = complete_registration(request, await request.json(), initial_user())
+    except Exception as error:
+        return JSONResponse({"detail": f"Passkey registration failed: {error}"}, status_code=400)
+    user = initial_user()
+    with connection() as db:
+        db.execute(
+            """INSERT INTO passkeys (user_id,credential_id,credential_public_key,sign_count)
+               VALUES (?,?,?,?) ON CONFLICT(user_id) DO UPDATE SET credential_id=excluded.credential_id,
+               credential_public_key=excluded.credential_public_key,sign_count=excluded.sign_count,
+               created_at=CURRENT_TIMESTAMP,last_used_at=NULL""",
+            (user["id"], credential_id, public_key, sign_count),
+        )
+        db.execute("UPDATE users SET login_enabled=1 WHERE id=?", (user["id"],))
+    request.session["authenticated"] = True
+    return JSONResponse({"ok": True})
+
+
+@app.post("/auth/login/options")
+def login_passkey_options(request: Request):
+    with connection() as db:
+        passkey = db.execute("SELECT * FROM passkeys LIMIT 1").fetchone()
+    if passkey is None:
+        return JSONResponse({"detail": "No passkey is configured."}, status_code=404)
+    return Response(issue_authentication_options(request, passkey), media_type="application/json")
+
+
+@app.post("/auth/login/verify")
+async def login_passkey_verify(request: Request):
+    with connection() as db:
+        passkey = db.execute("SELECT * FROM passkeys LIMIT 1").fetchone()
+        if passkey is None:
+            return JSONResponse({"detail": "No passkey is configured."}, status_code=404)
+        try:
+            sign_count = complete_authentication(request, await request.json(), passkey)
+        except Exception as error:
+            return JSONResponse({"detail": f"Passkey sign-in failed: {error}"}, status_code=401)
+        db.execute("UPDATE passkeys SET sign_count=?,last_used_at=CURRENT_TIMESTAMP WHERE id=?", (sign_count, passkey["id"]))
+    request.session["authenticated"] = True
+    return JSONResponse({"ok": True})
+
+
+@app.post("/logout")
+def logout(request: Request):
+    request.session.clear()
+    return RedirectResponse("/login", status_code=303)
+
+
 @app.get("/")
 def dashboard(request: Request):
     return templates.TemplateResponse(request, "dashboard.html", page_context(request))
@@ -730,7 +841,13 @@ def providers(request: Request):
 
 @app.get("/settings")
 def settings_page(request: Request):
-    return templates.TemplateResponse(request, "settings.html", page_context(request))
+    with connection() as db:
+        passkey = db.execute(
+            "SELECT created_at,last_used_at FROM passkeys WHERE user_id=?", (initial_user()["id"],)
+        ).fetchone()
+    return templates.TemplateResponse(
+        request, "settings.html", page_context(request, passkey=dict(passkey) if passkey else None)
+    )
 
 
 @app.post("/settings/mileage")

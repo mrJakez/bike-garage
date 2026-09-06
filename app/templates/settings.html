@@ -17,5 +17,14 @@
 {% else %}
 <section class="card settings-status is-paused"><strong>Garage start is not set</strong><span>Set a start date once your baseline kilometer values are in place.</span></section>
 {% endif %}
-<style>.settings-card{max-width:720px}.settings-card h2{margin-top:0}.settings-card form{display:grid;gap:12px;margin-top:20px}.settings-card label{display:grid;gap:7px;font-weight:700}.settings-card input{max-width:340px;padding:11px 12px;border:1px solid var(--line);border-radius:8px;background:#fff;font:inherit}.settings-card button{justify-self:start}.settings-status{display:grid;gap:5px;max-width:720px;background:#e8f2ed;border-color:#b9d8c8}.settings-status strong{color:var(--green)}.settings-status span{color:var(--muted);font-size:.88rem}.settings-status.is-paused{background:#fff8ec;border-color:#e5c38e}.settings-status.is-paused strong{color:#9a621b}</style>
+<section class="card settings-card passkey-settings">
+  <h2>Passkey</h2>
+  {% if passkey %}
+  <p class="settings-status-copy"><strong>Passkey configured</strong><span>Created: {{ passkey.created_at|log_datetime }}</span>{% if passkey.last_used_at %}<span>Last used: {{ passkey.last_used_at|log_datetime }}</span>{% endif %}</p>
+  <form method="post" action="/logout"><button type="submit" class="secondary">Log out</button></form>
+  {% else %}
+  <p class="settings-status-copy"><strong>No passkey configured</strong><span>Enable passkey registration in the container environment to initialize it.</span></p>
+  {% endif %}
+</section>
+<style>.settings-card{max-width:720px}.settings-card h2{margin-top:0}.settings-card form{display:grid;gap:12px;margin-top:20px}.settings-card label{display:grid;gap:7px;font-weight:700}.settings-card input{max-width:340px;padding:11px 12px;border:1px solid var(--line);border-radius:8px;background:#fff;font:inherit}.settings-card button{justify-self:start}.settings-status{display:grid;gap:5px;max-width:720px;background:#e8f2ed;border-color:#b9d8c8}.settings-status strong{color:var(--green)}.settings-status span,.settings-status-copy span{color:var(--muted);font-size:.88rem}.settings-status.is-paused{background:#fff8ec;border-color:#e5c38e}.settings-status.is-paused strong{color:#9a621b}.passkey-settings{margin-top:22px}.settings-status-copy{display:grid;gap:4px}.settings-status-copy strong{color:var(--green)}.passkey-settings .secondary{margin-top:4px}</style>
 {% endblock %}

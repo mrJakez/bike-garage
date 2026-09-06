@@ -42,6 +42,16 @@ def initialise_database() -> None:
                 created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
             );
 
+            CREATE TABLE IF NOT EXISTS passkeys (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                user_id INTEGER NOT NULL UNIQUE REFERENCES users(id) ON DELETE CASCADE,
+                credential_id TEXT NOT NULL UNIQUE,
+                credential_public_key BLOB NOT NULL,
+                sign_count INTEGER NOT NULL DEFAULT 0,
+                created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                last_used_at TEXT
+            );
+
             CREATE TABLE IF NOT EXISTS user_settings (
                 user_id INTEGER PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
                 mileage_tracking_started_at TEXT,

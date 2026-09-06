@@ -128,14 +128,17 @@ def fetch_bikes(endpoint_url: str, api_key: str | None, account_identifier: str,
 
 
 def update_activity_gear(endpoint_url: str, api_key: str | None, account_identifier: str,
-                         activity_id: str, gear_id: str) -> dict:
-    """Set a Strava activity's gear through the proxy (use 'none' to clear)."""
+                         activity_id: str, gear_id: str, *, description: str | None = None) -> dict:
+    """Set a Strava activity's gear and optionally append an audit note."""
+    update_payload = {"gear_id": gear_id}
+    if description is not None:
+        update_payload["description"] = description
     payload = _authenticated_request(
         endpoint_url,
         api_key,
         f"{quote(account_identifier, safe='')}/activities/{quote(str(activity_id), safe='')}",
         method="PUT",
-        payload={"gear_id": gear_id},
+        payload=update_payload,
     )
     if not isinstance(payload, dict):
         raise ValueError("The proxy activity update returned an unexpected response.")
