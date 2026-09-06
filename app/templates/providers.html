@@ -28,7 +28,7 @@
 <div class="provider-grid">
   {% for key, provider in providers.items() %}
   <section class="card provider-card">
-    <img class="provider-icon" src="{{ url_for('static', path='provider-' ~ provider.icon ~ '.svg') }}" alt="{{ provider.name }}">
+    <img class="provider-icon" src="/static/provider-{{ provider.icon }}.svg" alt="{{ provider.name }}">
     <h2>{{ provider.name }}</h2>
     <p>{{ provider.description }}</p>
     <a class="button secondary" href="/providers/{{ key }}/connect">Connect {{ provider.name }}</a>
@@ -40,7 +40,7 @@
   <div class="connections">
   {% for item in connections %}
     <div class="connection-row">
-      <div class="connection-provider"><img class="provider-mark provider-mark-connection" src="{{ url_for('static', path='provider-' ~ providers[item.provider_type].icon ~ '.svg') }}" alt="{{ providers[item.provider_type].name }}"><div><strong>{{ providers[item.provider_type].name }} · {{ item.display_name }}</strong><span>Connection ID: <code>{{ item.identifier }}</code>{% if item.external_account_id %} · Provider account: {{ item.external_account_id }}{% endif %}</span></div></div>
+      <div class="connection-provider"><img class="provider-mark provider-mark-connection" src="/static/provider-{{ providers[item.provider_type].icon }}.svg" alt="{{ providers[item.provider_type].name }}"><div><strong>{{ providers[item.provider_type].name }} · {{ item.display_name }}</strong><span>Connection ID: <code>{{ item.identifier }}</code>{% if item.external_account_id %} · Provider account: {{ item.external_account_id }}{% endif %}</span></div></div>
       <div class="connection-actions"><span class="status {{ item.status|lower }}">{{ item.status.replace('_', ' ') }}</span><div class="connection-buttons"><a class="test-button" href="/connections/{{ item.id }}/edit">Edit</a><form method="post" action="/connections/{{ item.id }}/test"><button class="test-button" type="submit">Test connection</button></form><form method="post" action="/connections/{{ item.id }}/delete" onsubmit="return confirm('Delete this provider connection and its imported activities? Activities also linked to another provider will be kept.');"><button class="test-button danger-outline" type="submit">Delete</button></form></div></div>
     </div>
   {% endfor %}

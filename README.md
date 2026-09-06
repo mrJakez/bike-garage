@@ -22,12 +22,21 @@ BIKE_GARAGE_PASSKEY_REGISTRATION_ENABLED=true
 BIKE_GARAGE_SESSION_SECRET=use-a-long-random-value
 BIKE_GARAGE_PASSKEY_RP_ID=bike-garage.example.net
 BIKE_GARAGE_PASSKEY_ORIGIN=https://bike-garage.example.net
+BIKE_GARAGE_PUBLIC_ORIGIN=https://bike-garage.example.net
 ```
 
 Open `/register` and create the passkey. Then set
 `BIKE_GARAGE_PASSKEY_REGISTRATION_ENABLED=false` and restart the container.
 From then on, every page requires that passkey. `localhost` works for local
 setup; a NAS deployment needs HTTPS and the matching public hostname above.
+
+## NAS reverse proxy
+
+Terminate TLS at the NAS reverse proxy and forward the application to
+`http://<docker-host>:8000`. Set both public-origin variables above to the
+external `https://` URL. Static files deliberately use root-relative URLs, so
+they remain HTTPS in the browser even when the proxy talks HTTP to the
+container.
 
 ## Current scope
 

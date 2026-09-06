@@ -31,6 +31,11 @@ templates = Jinja2Templates(directory=str(APP_ROOT / "templates"))
 LOCAL_TIMEZONE = ZoneInfo("Europe/Berlin")
 
 
+def public_origin(request: Request) -> str:
+    """Use the explicit external HTTPS origin when the app is behind a proxy."""
+    return os.getenv("BIKE_GARAGE_PUBLIC_ORIGIN", "").strip().rstrip("/") or str(request.base_url).rstrip("/")
+
+
 def format_activity_datetime(value: object) -> str:
     """Present provider timestamps without exposing ISO/UTC implementation detail."""
     if not value:
@@ -2082,7 +2087,7 @@ def authorize_hammerhead_connection(request: Request, connection_id: int):
             return RedirectResponse("/providers?notice=Provider+connection+not+found", status_code=303)
         state = secrets.token_urlsafe(32)
         db.execute("UPDATE provider_connections SET oauth_state=?, updated_at=CURRENT_TIMESTAMP WHERE id=?", (state, connection_id))
-    redirect_uri = str(request.base_url).rstrip("/") + "/providers/HAMMERHEAD/callback"
+    redirect_uri = public_origin(request) + "/providers/HAMMERHEAD/callback"
     return RedirectResponse(hammerhead_authorization_url(provider_connection["oauth_client_id"], redirect_uri, state), status_code=303)
 
 
@@ -2096,7 +2101,7 @@ def hammerhead_oauth_callback(request: Request, code: str | None = None, state: 
         provider_connection = db.execute("SELECT * FROM provider_connections WHERE provider_type='HAMMERHEAD' AND oauth_state=?", (state,)).fetchone()
     if provider_connection is None:
         return RedirectResponse("/providers?notice=Hammerhead+authorization+state+was+not+recognized.", status_code=303)
-    redirect_uri = str(request.base_url).rstrip("/") + "/providers/HAMMERHEAD/callback"
+    redirect_uri = public_origin(request) + "/providers/HAMMERHEAD/callback"
     try:
         token = exchange_hammerhead_code(provider_connection["oauth_client_id"], provider_connection["oauth_client_secret"], code, redirect_uri)
     except Exception as exc:
