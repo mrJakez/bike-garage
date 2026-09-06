@@ -19,7 +19,7 @@ from fastapi.templating import Jinja2Templates
 from .connectors.strava_proxy import fetch_bikes as fetch_strava_bikes, health_check, normalise_base_url, test_connection, update_activity_gear as update_strava_activity_gear
 from .connectors.hammerhead import DEFAULT_API_BASE_URL, authorization_url as hammerhead_authorization_url, exchange_code as exchange_hammerhead_code, fetch_activity_detail as fetch_hammerhead_activity_detail, fetch_activity_fit as fetch_hammerhead_activity_fit, normalise_base_url as normalise_hammerhead_base_url, test_connection as test_hammerhead_connection
 from .database import connection, initial_user, initialise_database
-from .sync import ActivityContext, apply_rule, attach_hardware_observations, expression_error, evaluate_expression, refresh_all_canonical_timings, repair_strava_local_start_times, start_sync_loop, store_fit_hardware, sync_all_connections, validate_expression
+from .sync import ActivityContext, apply_rule, attach_hardware_observations, expression_error, evaluate_expression, refresh_all_canonical_timings, refresh_hammerhead_connection_token, repair_strava_local_start_times, start_sync_loop, store_fit_hardware, sync_all_connections, validate_expression
 
 
 APP_ROOT = Path(__file__).parent
@@ -1889,6 +1889,20 @@ def test_provider_connection(connection_id: int):
         ).fetchone()
         if provider_connection is None:
             return RedirectResponse("/providers?notice=Provider+connection+not+found", status_code=303)
+        if provider_connection["provider_type"] == "HAMMERHEAD":
+            try:
+                provider_connection = refresh_hammerhead_connection_token(db, provider_connection)
+            except Exception as error:
+                db.execute(
+                    """UPDATE provider_connections
+                       SET status='NEEDS_CONFIGURATION', last_tested_at=CURRENT_TIMESTAMP,
+                           last_test_status='FAILED', last_test_message=?, updated_at=CURRENT_TIMESTAMP
+                       WHERE id=?""",
+                    (f"Hammerhead token refresh failed: {error}", connection_id),
+                )
+                return RedirectResponse(
+                    "/providers?" + urlencode({"test_connection": connection_id}), status_code=303
+                )
         result = (test_hammerhead_connection if provider_connection["provider_type"] == "HAMMERHEAD" else test_connection)(
             provider_connection["endpoint_url"] or "",
             provider_connection["access_token"],
@@ -1970,7 +1984,7 @@ def hammerhead_oauth_callback(request: Request, code: str | None = None, state: 
         token = exchange_hammerhead_code(provider_connection["oauth_client_id"], provider_connection["oauth_client_secret"], code, redirect_uri)
     except Exception as exc:
         return RedirectResponse("/providers?" + urlencode({"notice": f"Hammerhead token exchange failed: {exc}"}), status_code=303)
-    expires_at = int(time.time()) + int(token.get("expires_in") or 0)
+    expires_at = int(time.time()) + max(60, int(token.get("expires_in") or 3600))
     with connection() as db:
         db.execute("""UPDATE provider_connections SET access_token=?, refresh_token=?, token_expires_at=?, external_account_id=?,
                    oauth_state=NULL, status='NEEDS_CONFIGURATION', updated_at=CURRENT_TIMESTAMP WHERE id=?""",

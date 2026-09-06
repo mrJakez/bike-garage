@@ -36,6 +36,27 @@ def exchange_code(client_id: str, client_secret: str, code: str, redirect_uri: s
     return token
 
 
+def refresh_access_token(client_id: str, client_secret: str, refresh_token: str) -> dict:
+    """Exchange a stored refresh token for a new Hammerhead access token."""
+    if not refresh_token:
+        raise ValueError("A Hammerhead OAuth refresh token is required.")
+    payload = urlencode({
+        "client_id": client_id,
+        "client_secret": client_secret,
+        "grant_type": "refresh_token",
+        "refresh_token": refresh_token,
+    }).encode()
+    request = Request(
+        f"{DEFAULT_AUTH_BASE_URL}/oauth/token", data=payload,
+        headers={"Content-Type": "application/x-www-form-urlencoded", "Accept": "application/json"},
+    )
+    with urlopen(request, timeout=15) as response:
+        token = json.loads(response.read().decode("utf-8"))
+    if not isinstance(token, dict) or not token.get("access_token"):
+        raise ValueError("Hammerhead returned an invalid refresh-token response.")
+    return token
+
+
 @dataclass(frozen=True)
 class HammerheadConnectionTest:
     is_healthy: bool

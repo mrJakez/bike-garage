@@ -17,6 +17,7 @@ from .connectors.hammerhead import (
     fetch_activities as fetch_hammerhead_activities,
     fetch_activity_detail as fetch_hammerhead_activity_detail,
     fetch_activity_fit as fetch_hammerhead_activity_fit,
+    refresh_access_token as refresh_hammerhead_access_token,
 )
 from .fit_hardware import extract_device_info
 from .database import connection
@@ -67,6 +68,37 @@ def fetch_missing_hammerhead_hardware(
         # Keep importing the activity even if Hammerhead has not made its FIT
         # file available yet. A future sync retries before running the rule.
         return False
+
+
+def refresh_hammerhead_connection_token(
+    db: Any, connection_row: Any, *, force: bool = False,
+) -> dict[str, Any]:
+    """Refresh an expiring Hammerhead token and return its persisted row.
+
+    Hammerhead supplies a refresh token with OAuth authorization.  The old
+    flow stored it but never redeemed it, so a routine access-token expiry
+    incorrectly looked like a connection that had to be set up again.
+    """
+    connection = dict(connection_row)
+    expires_at = int(connection.get("token_expires_at") or 0)
+    if not force and connection.get("access_token") and expires_at > int(time.time()) + 60:
+        return connection
+    token = refresh_hammerhead_access_token(
+        connection.get("oauth_client_id") or "",
+        connection.get("oauth_client_secret") or "",
+        connection.get("refresh_token") or "",
+    )
+    refreshed_expires_at = int(time.time()) + max(60, int(token.get("expires_in") or 3600))
+    db.execute(
+        """UPDATE provider_connections
+           SET access_token=?, refresh_token=?, token_expires_at=?, status='CONNECTED', updated_at=CURRENT_TIMESTAMP
+           WHERE id=?""",
+        (
+            token["access_token"], token.get("refresh_token") or connection.get("refresh_token"),
+            refreshed_expires_at, connection["id"],
+        ),
+    )
+    return dict(db.execute("SELECT * FROM provider_connections WHERE id=?", (connection["id"],)).fetchone())
 
 
 def attach_hardware_observations(db: Any, rows: list[Any]) -> list[dict[str, Any]]:
@@ -322,17 +354,33 @@ def display_started_at(activity: dict[str, Any], provider_type: str | None) -> s
 
 def import_connection(connection_row: Any) -> int:
     with connection() as db:
+        if connection_row["provider_type"] == "HAMMERHEAD":
+            connection_row = refresh_hammerhead_connection_token(db, connection_row)
         last = db.execute(
             "SELECT MAX(started_at_epoch) FROM provider_activities WHERE connection_id = ?",
             (connection_row["id"],),
         ).fetchone()[0]
     fetcher = fetch_hammerhead_activities if connection_row["provider_type"] == "HAMMERHEAD" else fetch_activities
-    records = fetcher(
-        connection_row["endpoint_url"] or "",
-        connection_row["access_token"],
-        connection_row["external_account_id"] or "",
-        after=int(last) if last else None,
-    )
+    try:
+        records = fetcher(
+            connection_row["endpoint_url"] or "",
+            connection_row["access_token"],
+            connection_row["external_account_id"] or "",
+            after=int(last) if last else None,
+        )
+    except HTTPError as error:
+        if connection_row["provider_type"] != "HAMMERHEAD" or error.code != 401:
+            raise
+        # A revoked or prematurely expired access token can return 401 before
+        # its advertised expiry. Refresh once, then retry this same import.
+        with connection() as db:
+            connection_row = refresh_hammerhead_connection_token(db, connection_row, force=True)
+        records = fetcher(
+            connection_row["endpoint_url"] or "",
+            connection_row["access_token"],
+            connection_row["external_account_id"] or "",
+            after=int(last) if last else None,
+        )
     imported = 0
     try:
         selected_types = set(json.loads(connection_row["activity_types_json"] or "[]"))
