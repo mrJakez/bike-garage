@@ -9,3 +9,10 @@
 /* Primary navigation */
 nav a{display:flex;align-items:center;gap:11px}
 nav a svg{width:18px;height:18px;flex:0 0 18px;fill:none;stroke:currentColor;stroke-width:1.8;stroke-linecap:round;stroke-linejoin:round}
+
+/* Published-image provenance belongs at the bottom of the persistent navigation. */
+aside{display:flex;flex-direction:column}
+.build-metadata{display:grid;gap:2px;margin-top:auto;padding-top:18px;border-top:1px solid #ffffff1c;color:#8d9994;font-size:.7rem;letter-spacing:.02em}
+.build-metadata span{font-family:ui-monospace,SFMono-Regular,Menlo,monospace}
+.build-metadata time{font-size:.67rem}
+@media(max-width:760px){.build-metadata{margin-top:18px;padding-top:14px}}

@@ -4,6 +4,7 @@ import json
 import ast
 import re
 import difflib
+import hashlib
 import math
 import os
 import threading
@@ -585,10 +586,72 @@ def import_connection(connection_row: Any) -> int:
     return imported
 
 
-def apply_rule(db: Any, activity_id: int, sport_type: str | None, account_id: str | None) -> None:
+def resolver_rule_hash(db: Any) -> str:
+    """Fingerprint the complete ordered resolver configuration.
+
+    Disabled rules are deliberately included: enabling, disabling, deleting,
+    or reordering a rule must all make prior resolutions stale.
+    """
+    rules = db.execute(
+        """SELECT id, name, priority, sport_type, provider_account_id, bike_count,
+                  expression, condition_operator, condition_value, is_catch_all, enabled
+           FROM resolver_rules ORDER BY priority ASC, id ASC"""
+    ).fetchall()
+    payload = [dict(rule) for rule in rules]
+    return hashlib.sha256(
+        json.dumps(payload, ensure_ascii=False, sort_keys=True, separators=(",", ":"), default=str).encode()
+    ).hexdigest()
+
+
+def resolver_activity_hash(db: Any, activity_row: Any) -> str:
+    """Fingerprint rule inputs owned by one canonical activity and its sources."""
+    providers = db.execute(
+        """SELECT pa.id, pa.external_activity_id, pa.name, pa.sport_type, pa.started_at,
+                  pa.started_at_epoch, pa.distance_m, pa.raw_json, pc.provider_type,
+                  pc.identifier, pc.external_account_id
+           FROM activity_provider_links apl
+           JOIN provider_activities pa ON pa.id=apl.provider_activity_id
+           JOIN provider_connections pc ON pc.id=pa.connection_id
+           WHERE apl.activity_id=?
+           ORDER BY pa.id ASC""",
+        (activity_row["id"],),
+    ).fetchall()
+    provider_payload = []
+    for provider in providers:
+        item = dict(provider)
+        item["hardware"] = [dict(hardware) for hardware in db.execute(
+            """SELECT component_type, protocol, ant_device_number, manufacturer_id,
+                      manufacturer_name, device_type_id, serial_number, product_id,
+                      product_name, battery_status, raw_json, observed_at
+               FROM provider_activity_hardware WHERE provider_activity_id=? ORDER BY id ASC""",
+            (provider["id"],),
+        ).fetchall()]
+        provider_payload.append(item)
+    payload = {
+        # Do not include rule-generated name/count fields here. Doing so would
+        # invalidate the hash after every execution and recreate scheduler logs.
+        "activity": {
+            "id": activity_row["id"],
+            "manual_title": activity_row["manual_title"],
+            "sport_type": activity_row["sport_type"],
+            "started_at": activity_row["started_at"],
+            "started_at_epoch": activity_row["started_at_epoch"],
+            "distance_m": activity_row["distance_m"],
+        },
+        "provider_activities": provider_payload,
+    }
+    return hashlib.sha256(
+        json.dumps(payload, ensure_ascii=False, sort_keys=True, separators=(",", ":"), default=str).encode()
+    ).hexdigest()
+
+
+def apply_rule(
+    db: Any, activity_id: int, sport_type: str | None, account_id: str | None, *, force: bool = False,
+) -> bool:
+    """Resolve an activity when its rule inputs changed, returning whether it ran."""
     activity_row = db.execute("SELECT * FROM activities WHERE id = ?", (activity_id,)).fetchone()
     if activity_row is None or activity_row["deleted_at"] is not None:
-        return
+        return False
     garage_start = db.execute(
         "SELECT mileage_tracking_started_at_epoch FROM user_settings ORDER BY user_id LIMIT 1"
     ).fetchone()
@@ -596,7 +659,14 @@ def apply_rule(db: Any, activity_id: int, sport_type: str | None, account_id: st
     if garage_start_epoch is not None and (activity_row["started_at_epoch"] or 0) < garage_start_epoch:
         # Keep imported history untouched. It is outside the Garage's managed
         # period and must not receive automatic titles or bike assignments.
-        return
+        return False
+    current_rule_hash = resolver_rule_hash(db)
+    current_activity_hash = resolver_activity_hash(db, activity_row)
+    if not force and (
+        activity_row["rule_hash"] == current_rule_hash
+        and activity_row["activity_hash"] == current_activity_hash
+    ):
+        return False
     rules = db.execute(
         "SELECT * FROM resolver_rules WHERE enabled = 1 ORDER BY priority ASC, id ASC"
     ).fetchall()
@@ -650,7 +720,12 @@ def apply_rule(db: Any, activity_id: int, sport_type: str | None, account_id: st
         )
     resolved_count = max(1, int(context.bikeCount or count))
     resolved_title = activity_row["manual_title"] or context.title or activity_row["name"]
-    db.execute("UPDATE activities SET name = ?, expected_bike_count = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ?", (resolved_title, resolved_count, activity_id))
+    db.execute(
+        """UPDATE activities
+           SET name=?, expected_bike_count=?, rule_hash=?, activity_hash=?, updated_at=CURRENT_TIMESTAMP
+           WHERE id=?""",
+        (resolved_title, resolved_count, current_rule_hash, current_activity_hash, activity_id),
+    )
     if context.bikes_changed:
         db.execute("DELETE FROM activity_bike_assignments WHERE activity_id=? AND source='RULE'", (activity_id,))
         for slot_index, bike in enumerate(context.bikes[:resolved_count], start=1):
@@ -658,6 +733,18 @@ def apply_rule(db: Any, activity_id: int, sport_type: str | None, account_id: st
                 db.execute("INSERT OR REPLACE INTO activity_bike_assignments (activity_id,bike_id,slot_index,source) VALUES (?,?,?,'RULE')", (activity_id,bike.id,slot_index))
     # Resolver runs only calculate Bike Garage state. External Strava writes
     # require an explicit confirmation from the activity detail page.
+    return True
+
+
+def apply_stale_rules(db: Any) -> int:
+    """Resolve only activities whose saved rule or source fingerprint is stale."""
+    resolved = 0
+    for activity in db.execute(
+        "SELECT id, sport_type FROM activities WHERE deleted_at IS NULL ORDER BY id"
+    ).fetchall():
+        if apply_rule(db, activity["id"], activity["sport_type"], None):
+            resolved += 1
+    return resolved
 
 
 def apply_rule_assignment(line: str, context: ActivityContext, names: dict[str, object], functions: dict[str, object]) -> bool:
@@ -1539,6 +1626,8 @@ def sync_all_connections(
     separate_same_connection_sources()
     refresh_all_canonical_timings()
     reconcile_single_source_activities()
+    with connection() as db:
+        apply_stale_rules(db)
     report("Activity records are up to date.")
     return total
 

@@ -1,53 +1,64 @@
 {% extends "base.html" %}
 {% block title %}Settings · Bike Garage{% endblock %}
 {% block content %}
-<p class="eyebrow">AUTOMATION</p>
-<div class="page-heading"><div><h1>Import scheduler</h1><p class="lead">Control automatic provider imports for this Bike Garage.</p></div></div>
-<section class="card settings-card scheduler-settings">
-  <form method="post" action="/settings/scheduler">
-    <div class="scheduler-controls">
-      <label class="scheduler-toggle"><input type="checkbox" name="enabled" value="1"{% if scheduler_enabled %} checked{% endif %}><span><strong>Enable automatic imports</strong><small>Connected providers synchronize in the background.</small></span></label>
-      <label class="scheduler-interval"><span>Import every</span><span class="input-suffix"><input name="interval_minutes" type="number" min="1" max="1440" value="{{ scheduler_interval_minutes }}" required><b>minutes</b></span></label>
+<div class="settings-page">
+  <header class="settings-page-header">
+    <p class="eyebrow">GARAGE</p>
+    <h1>Settings</h1>
+    <p>Manage imports, provider data, and the period Bike Garage keeps in your mileage ledger.</p>
+  </header>
+
+  <section class="settings-section" aria-labelledby="scheduler-title">
+    <div class="settings-section-heading"><h2 id="scheduler-title">Import schedule</h2></div>
+    <div class="settings-panel">
+      <form method="post" action="/settings/scheduler" class="settings-form">
+        <div class="settings-control-grid">
+          <label class="settings-toggle"><input type="checkbox" name="enabled" value="1"{% if scheduler_enabled %} checked{% endif %}><span><strong>Automatic imports</strong><small>Connected providers synchronize in the background.</small></span></label>
+          <label class="settings-field"><span>Import interval</span><span class="settings-input-suffix"><input name="interval_minutes" type="number" min="1" max="1440" value="{{ scheduler_interval_minutes }}" required><b>minutes</b></span></label>
+        </div>
+        <div class="settings-form-footer"><p class="settings-status {{ 'is-enabled' if scheduler_enabled else 'is-disabled' }}"><strong>{{ 'Active' if scheduler_enabled else 'Paused' }}</strong><span>{% if scheduler_enabled %}New imports use this interval.{% else %}You can still synchronize manually from Activities.{% endif %}</span></p><button type="submit">Save schedule</button></div>
+        <p class="settings-note">Changes take effect immediately. The interval is stored in the database; <code>SYNC_INTERVAL_SECONDS</code> remains the initial deployment default.</p>
+      </form>
     </div>
-    <p class="scheduler-status {{ 'is-enabled' if scheduler_enabled else 'is-disabled' }}"><strong>{{ 'Active' if scheduler_enabled else 'Paused' }}</strong><span>{% if scheduler_enabled %}The next imports use this interval.{% else %}Sync now remains available under Activities.{% endif %}</span></p>
-    <p class="field-help">Changes take effect immediately. The interval is stored in the database; <code>SYNC_INTERVAL_SECONDS</code> remains the initial deployment default.</p>
-    <button type="submit" class="settings-save">Save scheduler</button>
-  </form>
-</section>
-<p class="eyebrow settings-section-eyebrow">DATA TRANSFER</p>
-<div class="page-heading settings-subheading"><div><h1>Provider import &amp; export</h1><p class="lead">Move saved provider connections between trusted Bike Garage environments.</p></div></div>
-<section class="card settings-card provider-transfer-settings">
-  <p class="field-help">The export includes access and refresh tokens, so store the downloaded file securely and delete it after importing.</p>
-  <div class="provider-transfer-actions">
-    <form method="post" action="/settings/providers/export"><button type="submit" class="secondary">Export provider connections</button></form>
-    <form method="post" action="/settings/providers/import" enctype="multipart/form-data" class="provider-import-form"><label><span>Import export file</span><input type="file" name="archive" accept="application/json,.json" required></label><button type="submit">Import and activate</button></form>
-  </div>
-</section>
-<p class="eyebrow">SETTINGS</p>
-<div class="page-heading"><div><h1>Garage start</h1><p class="lead">Choose when Bike Garage begins managing your activities and mileage.</p></div></div>
-<section class="card settings-card">
-  <h2>Managed activity period</h2>
-  <p class="field-help">Earlier imported activities stay stored, but are hidden and ignored by rules, mileage, and Strava updates. Set each bike’s starting mileage to its existing distance at this point.</p>
-  <form method="post" action="/settings/mileage">
-    <label>Garage start date<input type="datetime-local" name="garage_started_at" value="{{ mileage_settings.mileage_tracking_started_at or '' }}"></label>
-    <p class="field-help">Set this when you begin using Bike Garage; each bike’s starting mileage is its opening value.</p>
-    <button type="submit" class="settings-save">Save Garage start</button>
-  </form>
-</section>
-{% if mileage_settings.mileage_tracking_started_at %}
-<section class="card settings-status"><strong>Garage start: {{ mileage_settings.mileage_tracking_started_at|activity_datetime }}</strong><span>Only activities from this point onward are visible and managed.</span></section>
-{% else %}
-<section class="card settings-status is-paused"><strong>Garage start is not set</strong><span>Set a start date once your baseline kilometer values are in place.</span></section>
-{% endif %}
-<section class="card settings-card passkey-settings">
-  <h2>Passkey</h2>
-  {% if passkey %}
-  <p class="settings-status-copy"><strong>Passkey configured</strong><span>Created: {{ passkey.created_at|log_datetime }}</span>{% if passkey.last_used_at %}<span>Last used: {{ passkey.last_used_at|log_datetime }}</span>{% endif %}</p>
-  <form method="post" action="/logout"><button type="submit" class="secondary">Log out</button></form>
-  {% else %}
-  <p class="settings-status-copy"><strong>No passkey configured</strong><span>Enable passkey registration in the container environment to initialize it.</span></p>
-  {% endif %}
-</section>
-<style>.settings-card{max-width:1120px}.settings-card h2{margin-top:0}.settings-card form{display:grid;gap:16px;margin-top:20px}.settings-card label{display:grid;gap:7px;font-weight:700}.settings-card input{max-width:340px;padding:11px 12px;border:1px solid var(--line);border-radius:8px;background:#fff;font:inherit}.settings-card button{justify-self:start;min-height:44px;padding:10px 16px;font-size:.94rem}.settings-save{min-width:154px}.settings-status{display:grid;gap:5px;max-width:1120px;background:#e8f2ed;border-color:#b9d8c8}.settings-status strong{color:var(--green)}.settings-status span,.settings-status-copy span{color:var(--muted);font-size:.88rem}.settings-status.is-paused{background:#fff8ec;border-color:#e5c38e}.settings-status.is-paused strong{color:#9a621b}.passkey-settings{margin-top:22px}.settings-status-copy{display:grid;gap:4px}.settings-status-copy strong{color:var(--green)}.passkey-settings .secondary{margin-top:4px}.settings-section-eyebrow{margin-top:42px}.settings-subheading{margin-bottom:18px}.scheduler-settings form{gap:14px}.scheduler-controls{display:grid;grid-template-columns:minmax(0,1fr) minmax(220px,.38fr);gap:12px;align-items:stretch}.scheduler-toggle{display:grid!important;grid-template-columns:auto 1fr;align-items:center;gap:10px;padding:14px 15px;border:1px solid var(--line);border-radius:9px;background:#fff}.scheduler-toggle input{width:20px;height:20px;margin:0}.scheduler-toggle span{display:grid;gap:2px}.scheduler-toggle small{color:var(--muted);font-weight:400;font-size:.8rem}.scheduler-interval{padding:14px 15px;border:1px solid var(--line);border-radius:9px;background:#fff;color:var(--muted);font-size:.82rem}.scheduler-settings .input-suffix{display:grid;grid-template-columns:1fr auto;align-items:stretch;max-width:260px}.scheduler-settings .input-suffix input{min-width:0;border-radius:8px 0 0 8px}.scheduler-settings .input-suffix b{display:grid;place-items:center;padding:0 11px;border:1px solid #cfcac0;border-left:0;border-radius:0 8px 8px 0;background:#f4f2ec;color:var(--muted);font-size:.82rem}.scheduler-status{display:flex;align-items:center;gap:8px;margin:0;color:var(--muted);font-size:.85rem}.scheduler-status strong{padding:3px 8px;border-radius:999px;background:#e8f2ed;color:var(--green);font-size:.76rem}.scheduler-status.is-disabled strong{background:#fff3df;color:#9a621b}.provider-transfer-settings{margin-top:0}.provider-transfer-settings>.field-help{max-width:760px}.provider-transfer-actions{display:flex;align-items:end;flex-wrap:wrap;gap:16px}.provider-transfer-actions form{margin:0}.provider-import-form{display:flex!important;align-items:end;flex-wrap:wrap;gap:10px}.provider-import-form label{display:grid!important;gap:5px;color:var(--muted);font-size:.76rem;font-weight:700}.provider-import-form input{max-width:245px;font:inherit;font-size:.78rem}@media(max-width:760px){.settings-card,.settings-status{max-width:none}.scheduler-controls{grid-template-columns:1fr}.provider-transfer-actions,.provider-import-form{align-items:stretch}.provider-import-form{display:grid!important;width:100%}.provider-import-form input{max-width:100%}}</style>
-<style>.settings-card label{font-weight:700}</style>
+  </section>
+
+  <section class="settings-section" aria-labelledby="transfer-title">
+    <div class="settings-section-heading"><h2 id="transfer-title">Provider import &amp; export</h2></div>
+    <div class="settings-panel settings-transfer-panel">
+      <div class="settings-transfer-copy"><strong>Connection archive</strong><p>The export includes access and refresh tokens. Store the downloaded file securely and delete it after importing.</p></div>
+      <div class="settings-transfer-actions">
+        <form method="post" action="/settings/providers/export"><button type="submit" class="secondary">Export connections</button></form>
+        <form method="post" action="/settings/providers/import" enctype="multipart/form-data" class="settings-import-form"><label><span>Import archive</span><input type="file" name="archive" accept="application/json,.json" required></label><button type="submit">Import and activate</button></form>
+      </div>
+    </div>
+  </section>
+
+  <section class="settings-section" aria-labelledby="garage-start-title">
+    <div class="settings-section-heading"><h2 id="garage-start-title">Garage start</h2></div>
+    <div class="settings-panel">
+      <div class="settings-panel-intro"><strong>Managed activity period</strong><p>Earlier imported activities remain stored, but are hidden and ignored by rules, mileage, and Strava updates. Set each bike’s starting mileage to its existing distance at this point.</p></div>
+      <form method="post" action="/settings/mileage" class="settings-form settings-date-form"><label class="settings-field"><span>Garage start date</span><input type="datetime-local" name="garage_started_at" value="{{ mileage_settings.mileage_tracking_started_at or '' }}"></label><div class="settings-form-footer"><p class="settings-note">Each bike’s starting mileage becomes its opening value.</p><button type="submit">Save Garage start</button></div></form>
+      {% if mileage_settings.mileage_tracking_started_at %}
+      <div class="settings-inline-status"><strong>Garage start: {{ mileage_settings.mileage_tracking_started_at|activity_datetime }}</strong><span>Only activities from this point onward are visible and managed.</span></div>
+      {% else %}
+      <div class="settings-inline-status is-paused"><strong>Garage start is not set</strong><span>Set a start date once your baseline kilometer values are in place.</span></div>
+      {% endif %}
+    </div>
+  </section>
+
+  <section class="settings-section settings-security" aria-labelledby="passkey-title">
+    <div class="settings-section-heading"><h2 id="passkey-title">Passkey</h2></div>
+    <div class="settings-panel settings-security-panel">
+      {% if passkey %}
+      <div class="settings-panel-intro"><strong>Passkey configured</strong><p>Created {{ passkey.created_at|log_datetime }}{% if passkey.last_used_at %} · Last used {{ passkey.last_used_at|log_datetime }}{% endif %}</p></div><form method="post" action="/logout"><button type="submit" class="secondary">Log out</button></form>
+      {% else %}
+      <div class="settings-panel-intro"><strong>No passkey configured</strong><p>Enable passkey registration in the container environment to initialize it.</p></div>
+      {% endif %}
+    </div>
+  </section>
+</div>
+
+<style>
+  .settings-page{width:min(100%,1120px);display:grid;gap:38px}.settings-page-header{padding-bottom:2px}.settings-page-header h1{margin:5px 0 9px;font-size:2.45rem;letter-spacing:-.035em}.settings-page-header>p:last-child{max-width:670px;margin:0;color:var(--muted)}.settings-section{display:grid;gap:10px}.settings-section-heading h2{margin:0;font-size:1.12rem;letter-spacing:-.01em}.settings-panel{padding:24px 26px;border:1px solid var(--line);border-radius:14px;background:var(--paper);box-shadow:0 1px 2px #1d24230d}.settings-form{display:grid;gap:18px}.settings-control-grid{display:grid;grid-template-columns:minmax(0,1fr) minmax(230px,.38fr);gap:12px}.settings-toggle,.settings-field{display:grid;gap:6px;padding:15px 16px;border:1px solid var(--line);border-radius:10px;background:#fff;font-size:.88rem;font-weight:750}.settings-toggle{grid-template-columns:auto 1fr;align-items:center;gap:12px}.settings-toggle input{width:20px;height:20px;margin:0;accent-color:var(--green)}.settings-toggle span{display:grid;gap:2px}.settings-toggle strong{font-size:.96rem}.settings-toggle small,.settings-panel-intro p,.settings-transfer-copy p{color:var(--muted);font-size:.84rem;font-weight:400}.settings-field>span:first-child{color:var(--muted);font-size:.76rem;letter-spacing:.02em}.settings-input-suffix{display:grid;grid-template-columns:minmax(0,1fr) auto;align-items:stretch;margin-top:3px}.settings-input-suffix input,.settings-date-form input{min-width:0;width:100%;padding:10px 11px;border:1px solid #cfcac0;border-radius:8px;background:#fff;color:var(--ink);font:inherit}.settings-input-suffix input{border-radius:8px 0 0 8px}.settings-input-suffix b{display:grid;place-items:center;padding:0 12px;border:1px solid #cfcac0;border-left:0;border-radius:0 8px 8px 0;background:#f4f2ec;color:var(--muted);font-size:.8rem}.settings-form-footer{display:flex;align-items:center;justify-content:space-between;gap:18px;padding-top:2px}.settings-form-footer button,.settings-transfer-actions button,.settings-security-panel button{min-height:42px;padding:10px 15px;font-size:.88rem}.settings-status{display:flex;align-items:center;gap:8px;margin:0;color:var(--muted);font-size:.84rem}.settings-status strong{padding:3px 8px;border-radius:999px;background:#e8f2ed;color:var(--green);font-size:.74rem}.settings-status.is-disabled strong{background:#fff3df;color:#9a621b}.settings-note{margin:0;color:var(--muted);font-size:.78rem}.settings-form>.settings-note{padding-top:14px;border-top:1px solid var(--line)}.settings-transfer-panel{display:grid;grid-template-columns:minmax(230px,.8fr) minmax(0,1.4fr);align-items:end;gap:26px}.settings-transfer-copy strong,.settings-panel-intro strong{font-size:.98rem}.settings-transfer-copy p,.settings-panel-intro p{margin:4px 0 0}.settings-transfer-actions{display:flex;align-items:end;justify-content:flex-end;flex-wrap:wrap;gap:10px}.settings-transfer-actions form{margin:0}.settings-import-form{display:flex;align-items:end;flex-wrap:wrap;gap:10px}.settings-import-form label{display:grid;gap:5px;color:var(--muted);font-size:.75rem;font-weight:750}.settings-import-form input{max-width:245px;font:inherit;font-size:.78rem}.settings-panel-intro{padding-bottom:18px;border-bottom:1px solid var(--line)}.settings-date-form{grid-template-columns:minmax(220px,340px) minmax(0,1fr);align-items:end}.settings-date-form .settings-field{padding:0;border:0;background:none}.settings-date-form .settings-form-footer{padding:0}.settings-inline-status{display:flex;align-items:baseline;gap:9px;margin-top:18px;padding:12px 14px;border-radius:9px;background:#edf7f1;color:var(--green);font-size:.84rem}.settings-inline-status span{color:var(--muted)}.settings-inline-status.is-paused{background:#fff8ec;color:#9a621b}.settings-security{padding-bottom:8px}.settings-security-panel{display:flex;align-items:end;justify-content:space-between;gap:18px}.settings-security-panel .settings-panel-intro{padding:0;border:0}.settings-security-panel form{margin:0}@media(max-width:760px){.settings-page{gap:30px}.settings-page-header h1{font-size:2.15rem}.settings-panel{padding:20px}.settings-control-grid,.settings-transfer-panel,.settings-date-form{grid-template-columns:1fr}.settings-transfer-actions{align-items:stretch;justify-content:flex-start}.settings-import-form{display:grid;width:100%}.settings-import-form input{max-width:100%;width:100%}.settings-form-footer,.settings-security-panel{align-items:flex-start;flex-direction:column}.settings-form-footer button,.settings-security-panel button{width:100%}.settings-inline-status{align-items:flex-start;flex-direction:column;gap:3px}}
+</style>
 {% endblock %}

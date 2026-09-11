@@ -125,6 +125,8 @@ def initialise_database() -> None:
                 started_at_epoch INTEGER,
                 distance_m REAL NOT NULL DEFAULT 0,
                 expected_bike_count INTEGER NOT NULL DEFAULT 1,
+                rule_hash TEXT,
+                activity_hash TEXT,
                 deleted_at TEXT,
                 created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
                 updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
@@ -304,6 +306,10 @@ def initialise_database() -> None:
             db.execute("ALTER TABLE bikes ADD COLUMN details_markdown TEXT NOT NULL DEFAULT ''")
         if "expected_bike_count" not in activity_columns:
             db.execute("ALTER TABLE activities ADD COLUMN expected_bike_count INTEGER NOT NULL DEFAULT 1")
+        if "rule_hash" not in activity_columns:
+            db.execute("ALTER TABLE activities ADD COLUMN rule_hash TEXT")
+        if "activity_hash" not in activity_columns:
+            db.execute("ALTER TABLE activities ADD COLUMN activity_hash TEXT")
         if "manual_title" not in activity_columns:
             db.execute("ALTER TABLE activities ADD COLUMN manual_title TEXT")
         if "deleted_at" not in activity_columns:

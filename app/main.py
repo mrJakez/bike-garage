@@ -34,6 +34,25 @@ templates = Jinja2Templates(directory=str(APP_ROOT / "templates"))
 LOCAL_TIMEZONE = ZoneInfo("Europe/Berlin")
 
 
+def ghcr_build_metadata() -> dict[str, str] | None:
+    """Expose immutable image provenance only for published GHCR images."""
+    if os.getenv("BIKE_GARAGE_BUILD_SOURCE") != "ghcr":
+        return None
+    revision = os.getenv("BIKE_GARAGE_BUILD_GIT_SHA", "").strip()
+    committed_at = os.getenv("BIKE_GARAGE_BUILD_COMMIT_DATE", "").strip()
+    if not revision or not committed_at:
+        return None
+    try:
+        committed_at = datetime.fromisoformat(committed_at.replace("Z", "+00:00")).astimezone(UTC)
+    except ValueError:
+        return None
+    return {
+        "revision": revision[:12],
+        "committed_at": committed_at.strftime("%Y-%m-%d %H:%M UTC"),
+        "committed_at_iso": committed_at.isoformat().replace("+00:00", "Z"),
+    }
+
+
 def public_origin(request: Request) -> str:
     """Use the explicit external HTTPS origin when the app is behind a proxy."""
     return os.getenv("BIKE_GARAGE_PUBLIC_ORIGIN", "").strip().rstrip("/") or str(request.base_url).rstrip("/")
@@ -750,6 +769,7 @@ def page_context(request: Request, *, activity_filters: dict[str, object] | None
         "rules": rules,
         "providers": PROVIDERS,
         "tested_connection": tested_connection,
+        "build_metadata": ghcr_build_metadata(),
         **extra,
     }
 
@@ -773,7 +793,7 @@ def reapply_rules_to_all_activities(db: object) -> tuple[int, int]:
     failures = 0
     for activity in activities:
         try:
-            apply_rule(db, activity["id"], activity["sport_type"], None)
+            apply_rule(db, activity["id"], activity["sport_type"], None, force=True)
         except Exception:
             failures += 1
     return len(activities), failures
