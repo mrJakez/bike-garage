@@ -413,7 +413,7 @@ def save_bike_strava_gears(db: object, bike_id: int, gear_ids: list[str]) -> Non
         )
 
 
-def strava_gear_mismatches(db: object, activity_id: int) -> list[dict[str, object]]:
+def strava_activity_mismatches(db: object, activity_id: int) -> list[dict[str, object]]:
     """Return Strava sources whose configured bike or activity type differs."""
     activity = db.execute(
         "SELECT started_at_epoch FROM activities WHERE id=? AND deleted_at IS NULL", (activity_id,)
@@ -479,18 +479,19 @@ def strava_gear_mismatches(db: object, activity_id: int) -> list[dict[str, objec
     return mismatches
 
 
-def sync_strava_activity_gears(db: object, activity_id: int, provider_activity_id: int | None = None) -> tuple[int, int]:
+def sync_strava_activity(db: object, activity_id: int, provider_activity_id: int | None = None) -> tuple[int, int, int]:
     """Mirror configured Bike Garage bike fields to the matching Strava source."""
     updated_count = 0
     skipped_count = 0
-    for row in strava_gear_mismatches(db, activity_id):
+    failed_count = 0
+    for row in strava_activity_mismatches(db, activity_id):
         if provider_activity_id is not None and row["provider_activity_id"] != provider_activity_id:
             continue
         if not row["update_allowed"]:
             skipped_count += 1
             record_activity_log(
                 db, activity_id,
-                f"Strava bike update skipped for {row['connection_name']}: activity is before Garage start.",
+                f"Strava update skipped for {row['connection_name']}: activity is before Garage start.",
                 logger="STRAVA",
             )
             continue
@@ -519,9 +520,10 @@ def sync_strava_activity_gears(db: object, activity_id: int, provider_activity_i
                 description=description,
             )
         except Exception as error:
+            failed_count += 1
             record_activity_log(
                 db, activity_id,
-                f"Strava gear update failed for {row['connection_name']}: {error}",
+                f"Strava update failed for {row['connection_name']}: {error}",
                 logger="STRAVA",
             )
             continue
@@ -538,7 +540,7 @@ def sync_strava_activity_gears(db: object, activity_id: int, provider_activity_i
         )
         record_activity_log(db, activity_id, f"Strava updated for {row['connection_name']}: {note.removeprefix('Bike Garage: ')}.", logger="STRAVA")
         updated_count += 1
-    return updated_count, skipped_count
+    return updated_count, skipped_count, failed_count
 
 
 def connection_identifier_is_available(db: object, identifier: str, *, exclude_id: int | None = None) -> bool:
@@ -667,42 +669,20 @@ def page_context(request: Request, *, activity_filters: dict[str, object] | None
                 f"WHERE filter_aba.activity_id=a.id AND filter_b.identifier IN ({placeholders}))"
             )
             values.extend(selected_bikes)
-        if filters.get("todo"):
-            clauses.append(
-                "(a.expected_bike_count IS NULL OR "
-                "(SELECT COUNT(*) FROM activity_bike_assignments todo_aba WHERE todo_aba.activity_id=a.id) "
-                "!= a.expected_bike_count OR "
-                "EXISTS ("
-                "SELECT 1 FROM activity_provider_links todo_apl "
-                "JOIN provider_activities todo_pa ON todo_pa.id=todo_apl.provider_activity_id "
-                "JOIN provider_connections todo_pc ON todo_pc.id=todo_pa.connection_id "
-                "JOIN activity_bike_assignments todo_aba ON todo_aba.activity_id=a.id "
-                "JOIN bike_strava_gear_mappings todo_mapping ON todo_mapping.bike_id=todo_aba.bike_id "
-                "JOIN strava_gears todo_sg ON todo_sg.id=todo_mapping.strava_gear_id "
-                "WHERE todo_apl.activity_id=a.id AND todo_pc.provider_type='STRAVA_PROXY' "
-                "AND todo_sg.provider_connection_id=todo_pc.id "
-                "AND todo_aba.slot_index=("
-                "SELECT MIN(slot_index) FROM activity_bike_assignments first_aba "
-                "JOIN bike_strava_gear_mappings first_mapping ON first_mapping.bike_id=first_aba.bike_id "
-                "JOIN strava_gears first_sg ON first_sg.id=first_mapping.strava_gear_id "
-                "WHERE first_aba.activity_id=a.id AND first_sg.provider_connection_id=todo_pc.id"
-                ") "
-                "AND (CASE WHEN json_valid(todo_pa.raw_json) "
-                "THEN COALESCE(json_extract(todo_pa.raw_json, '$.gear_id'), '') ELSE '' END) "
-                "<> todo_sg.external_gear_id"
-                "))"
-            )
         clauses.insert(0, "a.deleted_at IS NULL")
         where_clause = f"WHERE {' AND '.join(clauses)}"
-        activity_result_summary = dict(db.execute(
-            f"""
-            SELECT COUNT(*) AS activity_count,
-                   COALESCE(SUM(a.distance_m), 0) AS total_distance_m
-            FROM activities a
-            {where_clause}
-            """,
-            values,
-        ).fetchone())
+        activity_result_summary = None
+        if not filters.get("todo"):
+            activity_result_summary = dict(db.execute(
+                f"""
+                SELECT COUNT(*) AS activity_count,
+                       COALESCE(SUM(a.distance_m), 0) AS total_distance_m
+                FROM activities a
+                {where_clause}
+                """,
+                values,
+            ).fetchone())
+        activity_limit = "" if filters.get("todo") else "LIMIT 100"
         activities = [dict(row) for row in db.execute(
             f"""
             SELECT a.*, COUNT(apl.provider_activity_id) AS source_count,
@@ -714,7 +694,7 @@ def page_context(request: Request, *, activity_filters: dict[str, object] | None
             {where_clause}
             GROUP BY a.id
             ORDER BY COALESCE(a.started_at_epoch, 0) DESC, a.id DESC
-            LIMIT 100
+            {activity_limit}
             """,
             values,
         ).fetchall()]
@@ -772,14 +752,25 @@ def page_context(request: Request, *, activity_filters: dict[str, object] | None
             activity["bike_assignments"] = assigned_bikes
             activity["assigned_bike_count"] = len(assigned_bikes)
             expected_count = activity.get("expected_bike_count")
-            activity["strava_gear_mismatches"] = strava_gear_mismatches(db, activity["id"])
-            activity["strava_gear_todo"] = bool(activity["strava_gear_mismatches"])
+            activity["strava_mismatches"] = strava_activity_mismatches(db, activity["id"])
+            activity["strava_gear_todo"] = any(item["gear_mismatch"] for item in activity["strava_mismatches"])
+            activity["strava_activity_type_todo"] = any(
+                item["activity_type_mismatch"] for item in activity["strava_mismatches"]
+            )
+            activity["strava_todo"] = bool(activity["strava_mismatches"])
             activity["bike_assignment_todo"] = (
                 not expected_count
                 or len(assigned_bikes) != expected_count
-                or activity["strava_gear_todo"]
+                or activity["strava_todo"]
             )
         attention_activities = [activity for activity in activities if activity["bike_assignment_todo"]]
+        if filters.get("todo"):
+            activity_result_summary = {
+                "activity_count": len(attention_activities),
+                "total_distance_m": sum(float(activity.get("distance_m") or 0) for activity in attention_activities),
+            }
+            activities = attention_activities[:100]
+            attention_activities = activities
         bikes = [dict(row) for row in db.execute("SELECT * FROM bikes ORDER BY name COLLATE NOCASE").fetchall()]
         mileage_settings = attach_bike_mileage(db, bikes, user["id"])
         for bike in bikes:
@@ -1631,7 +1622,7 @@ def activity_detail(request: Request, activity_uuid: str):
         ).fetchall()
         strava_mismatches = {
             item["provider_activity_id"]: item
-            for item in strava_gear_mismatches(db, activity_id)
+            for item in strava_activity_mismatches(db, activity_id)
         }
     providers = []
     resolver_runs_by_id: dict[str, dict[str, object]] = {}
@@ -1692,7 +1683,7 @@ def activity_detail(request: Request, activity_uuid: str):
     route_polyline = None
     for row in provider_rows:
         item = dict(row)
-        item["strava_gear_mismatch"] = strava_mismatches.get(item["id"])
+        item["strava_mismatch"] = strava_mismatches.get(item["id"])
         try:
             payload = json.loads(item["raw_json"])
         except (TypeError, json.JSONDecodeError):
@@ -1749,8 +1740,8 @@ def activity_detail(request: Request, activity_uuid: str):
     )
 
 
-@app.post("/activities/{activity_uuid}/strava-bikes/{provider_activity_id}/update")
-def update_activity_strava_bike(activity_uuid: str, provider_activity_id: int):
+@app.post("/activities/{activity_uuid}/strava/{provider_activity_id}/update")
+def update_activity_strava(activity_uuid: str, provider_activity_id: int):
     """Push configured Bike Garage bike fields to one matching Strava source."""
     with connection() as db:
         activity = db.execute(
@@ -1769,9 +1760,24 @@ def update_activity_strava_bike(activity_uuid: str, provider_activity_id: int):
             return RedirectResponse(
                 f"/activities/{activity_uuid}?notice=Strava+activity+not+found", status_code=303
             )
-        updated, skipped = sync_strava_activity_gears(db, activity["id"], provider_activity_id)
-    if updated:
-        notice = "Strava updated"
+        mismatch = next(
+            (
+                item
+                for item in strava_activity_mismatches(db, activity["id"])
+                if item["provider_activity_id"] == provider_activity_id
+            ),
+            None,
+        )
+        updated, skipped, failed = sync_strava_activity(db, activity["id"], provider_activity_id)
+    if failed:
+        notice = "Strava update failed; check the activity log for details"
+    elif updated and mismatch:
+        if mismatch["gear_mismatch"] and mismatch["activity_type_mismatch"]:
+            notice = "Strava bike and activity type updated"
+        elif mismatch["gear_mismatch"]:
+            notice = "Strava bike updated"
+        else:
+            notice = "Strava activity type updated"
     elif skipped:
         notice = "Strava was not updated: activity is before Garage start"
     else:
@@ -2062,6 +2068,7 @@ async def update_activity_bikes(request: Request, activity_uuid: str):
         except ValueError: continue
     strava_updated = 0
     strava_skipped = 0
+    strava_failed = 0
     with connection() as db:
         activity = db.execute("SELECT id, expected_bike_count FROM activities WHERE public_id=? AND deleted_at IS NULL", (activity_uuid,)).fetchone()
         if activity is None:
@@ -2096,12 +2103,19 @@ async def update_activity_bikes(request: Request, activity_uuid: str):
             # mismatch separately. The helper still safeguards activities
             # before the Garage start and only calls Strava when this Bike
             # Garage bike has a configured gear for the matching account.
-            strava_updated, strava_skipped = sync_strava_activity_gears(db, activity_id)
+            strava_updated, strava_skipped, strava_failed = sync_strava_activity(db, activity_id)
     notice = "Bike assignment updated"
     if strava_updated:
-        notice += f"; Strava bike updated for {strava_updated} activit{'ies' if strava_updated != 1 else 'y'}"
+        notice += f"; Strava updated for {strava_updated} activit{'ies' if strava_updated != 1 else 'y'}"
     elif strava_skipped:
-        notice += "; Strava bike was not updated before Garage start"
+        notice += "; Strava was not updated before Garage start"
+    if strava_failed:
+        notice += f"; Strava update failed for {strava_failed} activit{'ies' if strava_failed != 1 else 'y'}"
+    if "application/json" in request.headers.get("accept", ""):
+        return JSONResponse(
+            {"message": notice, "strava_updated": strava_updated, "strava_failed": strava_failed},
+            status_code=502 if strava_failed else 200,
+        )
     return RedirectResponse(f"/activities/{activity_uuid}?" + urlencode({"notice": notice}), status_code=303)
 
 

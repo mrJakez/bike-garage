@@ -11,7 +11,7 @@
 {% if attention_activities %}
 <section class="dashboard-section dashboard-attention-section">
   <div class="dashboard-section-heading">
-    <div><p class="eyebrow">NEEDS ATTENTION</p><h2>{{ attention_activities|length }} activit{{ 'y' if attention_activities|length == 1 else 'ies' }} need attention</h2><p class="dashboard-attention-lead">These managed activities have missing bike details or a Strava bike that still differs from the resolved bike.</p></div>
+    <div><p class="eyebrow">NEEDS ATTENTION</p><h2>{{ attention_activities|length }} activit{{ 'y' if attention_activities|length == 1 else 'ies' }} need attention</h2><p class="dashboard-attention-lead">These managed activities have missing bike details, or a Strava bike or activity type that differs from Bike Garage.</p></div>
     <a href="/activities?todo=1">Review all →</a>
   </div>
   <div class="dashboard-attention-list">
@@ -21,7 +21,7 @@
       <span class="dashboard-attention-icon" aria-hidden="true">!</span>
       <div>
         <h3>{{ activity.name or 'Untitled activity' }}</h3>
-        <p>{{ activity.started_at|activity_datetime }} · {{ activity.duration_label }} · {% if activity.strava_gear_todo %}Strava bike differs{% elif not activity.expected_bike_count %}Bike count missing{% else %}{{ open_slots }} bike slot{{ 's' if open_slots != 1 else '' }} open{% endif %}</p>
+        <p>{{ activity.started_at|activity_datetime }} · {{ activity.duration_label }} · {% if activity.strava_gear_todo and activity.strava_activity_type_todo %}Strava bike and activity type differ{% elif activity.strava_gear_todo %}Strava bike differs{% elif activity.strava_activity_type_todo %}Strava activity type differs{% elif not activity.expected_bike_count %}Bike count missing{% else %}{{ open_slots }} bike slot{{ 's' if open_slots != 1 else '' }} open{% endif %}</p>
       </div>
       <strong>{{ ((activity.distance_m or 0) / 1000)|km }} km</strong>
     </a>
@@ -77,7 +77,7 @@
         <div class="dashboard-activity-bikes">
           <strong>Bikes {{ activity.assigned_bike_count }} / {{ activity.expected_bike_count or 0 }}</strong>
           {% for bike in activity.bike_assignments %}<span><img src="/bike-photos/{{ bike.photo_filename }}" alt="">{{ bike.name }}</span>{% endfor %}
-          {% if activity.bike_assignment_todo %}<em>{{ (activity.expected_bike_count or 1) - activity.assigned_bike_count }} slot{% if ((activity.expected_bike_count or 1) - activity.assigned_bike_count) != 1 %}s{% endif %} open</em>{% endif %}
+          {% if activity.strava_gear_todo and activity.strava_activity_type_todo %}<em>Strava bike and activity type differ</em>{% elif activity.strava_gear_todo %}<em>Strava bike differs</em>{% elif activity.strava_activity_type_todo %}<em>Strava activity type differs</em>{% elif activity.bike_assignment_todo %}<em>{{ (activity.expected_bike_count or 1) - activity.assigned_bike_count }} slot{% if ((activity.expected_bike_count or 1) - activity.assigned_bike_count) != 1 %}s{% endif %} open</em>{% endif %}
         </div>
       </div>
       <div class="dashboard-activity-metrics"><strong>{{ ((activity.distance_m or 0) / 1000)|km }} km</strong><span class="provider-source-marks" aria-label="{{ activity.source_count }} provider source{% if activity.source_count != 1 %}s{% endif %}">{% for provider_type in activity.provider_types %}<img class="provider-mark" src="/static/provider-{{ 'strava' if provider_type == 'STRAVA_PROXY' else 'hammerhead' }}.svg?v=3" alt="{{ 'Strava' if provider_type == 'STRAVA_PROXY' else 'Hammerhead' }}">{% endfor %}</span></div>
