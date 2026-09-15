@@ -10,9 +10,9 @@
 nav a{display:flex;align-items:center;gap:11px}
 nav a svg{width:18px;height:18px;flex:0 0 18px;fill:none;stroke:currentColor;stroke-width:1.8;stroke-linecap:round;stroke-linejoin:round}
 
-/* Published-image provenance belongs at the bottom of the persistent navigation. */
-aside{display:flex;flex-direction:column}
-.build-metadata{display:grid;gap:2px;margin-top:auto;padding-top:18px;border-top:1px solid #ffffff1c;color:#8d9994;font-size:.7rem;letter-spacing:.02em}
+/* Published-image provenance belongs quietly at the bottom of the persistent navigation. */
+aside{position:sticky;top:0;display:flex;flex-direction:column;height:100vh}
+.build-metadata{position:absolute;right:24px;bottom:24px;left:24px;display:grid;gap:2px;color:#87918d;font-size:.62rem;line-height:1.35;letter-spacing:.015em;opacity:.72}
 .build-metadata span{font-family:ui-monospace,SFMono-Regular,Menlo,monospace}
-.build-metadata time{font-size:.67rem}
-@media(max-width:760px){.build-metadata{margin-top:18px;padding-top:14px}}
+.build-metadata time{font-size:.62rem}
+@media(max-width:760px){aside{position:relative;height:auto;min-height:0}.build-metadata{position:static;margin-top:18px;font-size:.66rem;opacity:.8}.build-metadata time{font-size:.66rem}}

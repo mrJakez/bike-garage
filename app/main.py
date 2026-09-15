@@ -47,7 +47,7 @@ def ghcr_build_metadata() -> dict[str, str] | None:
     except ValueError:
         return None
     return {
-        "revision": revision[:12],
+        "revision": revision[:7],
         "committed_at": committed_at.strftime("%Y-%m-%d %H:%M UTC"),
         "committed_at_iso": committed_at.isoformat().replace("+00:00", "Z"),
     }

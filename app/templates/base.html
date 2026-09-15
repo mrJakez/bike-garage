@@ -38,7 +38,7 @@
           <span>Settings</span>
         </a>
       </nav>
-      {% if build_metadata %}<div class="build-metadata" title="Git revision {{ build_metadata.revision }}"><span>Build {{ build_metadata.revision }}</span><time datetime="{{ build_metadata.committed_at_iso }}">{{ build_metadata.committed_at }}</time></div>{% endif %}
+      {% if build_metadata %}<div class="build-metadata" title="Git revision {{ build_metadata.revision }}"><span>build {{ build_metadata.revision }}</span><time datetime="{{ build_metadata.committed_at_iso }}">{{ build_metadata.committed_at }}</time></div>{% endif %}
     </aside>
     <main>
       {% if request.query_params.get('notice') %}{% set notice = request.query_params.get('notice') %}{% set is_error = ('invalid' in notice|lower or 'required' in notice|lower or 'error' in notice|lower or 'failed' in notice|lower or 'not found' in notice|lower) %}<div class="notice {{ 'error' if is_error else 'success' }}" role="alert">{{ notice }}</div>{% endif %}

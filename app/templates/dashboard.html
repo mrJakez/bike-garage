@@ -6,8 +6,29 @@
     <h1>Your garage</h1>
     <p class="lead">Your configured bikes, their current mileage, and the most recent rides.</p>
   </div>
-  <a class="button secondary" href="/bikes/new">Add bike</a>
 </div>
+
+{% if attention_activities %}
+<section class="dashboard-section dashboard-attention-section">
+  <div class="dashboard-section-heading">
+    <div><p class="eyebrow">NEEDS ATTENTION</p><h2>{{ attention_activities|length }} activit{{ 'y' if attention_activities|length == 1 else 'ies' }} need attention</h2><p class="dashboard-attention-lead">These managed activities have missing bike details or a Strava bike that still differs from the resolved bike.</p></div>
+    <a href="/activities?todo=1">Review all →</a>
+  </div>
+  <div class="dashboard-attention-list">
+    {% for activity in attention_activities[:5] %}
+    {% set open_slots = (activity.expected_bike_count or 1) - activity.assigned_bike_count %}
+    <a class="dashboard-attention-row" href="/activities/{{ activity.public_id }}">
+      <span class="dashboard-attention-icon" aria-hidden="true">!</span>
+      <div>
+        <h3>{{ activity.name or 'Untitled activity' }}</h3>
+        <p>{{ activity.started_at|activity_datetime }} · {{ activity.duration_label }} · {% if activity.strava_gear_todo %}Strava bike differs{% elif not activity.expected_bike_count %}Bike count missing{% else %}{{ open_slots }} bike slot{{ 's' if open_slots != 1 else '' }} open{% endif %}</p>
+      </div>
+      <strong>{{ ((activity.distance_m or 0) / 1000)|km }} km</strong>
+    </a>
+    {% endfor %}
+  </div>
+</section>
+{% endif %}
 
 <section class="dashboard-section">
   <div class="dashboard-section-heading">
@@ -40,28 +61,6 @@
   <div class="card dashboard-empty"><h2>No bikes configured yet</h2><p>Add your first bike to see mileage and assignments here.</p><a class="button" href="/bikes/new">Add bike</a></div>
   {% endif %}
 </section>
-
-{% if attention_activities %}
-<section class="dashboard-section dashboard-attention-section">
-  <div class="dashboard-section-heading">
-    <div><p class="eyebrow">NEEDS ATTENTION</p><h2>{{ attention_activities|length }} activit{{ 'y' if attention_activities|length == 1 else 'ies' }} need attention</h2><p class="dashboard-attention-lead">These managed activities have missing bike details or a Strava bike that still differs from the resolved bike.</p></div>
-    <a href="/activities?todo=1">Review all →</a>
-  </div>
-  <div class="dashboard-attention-list">
-    {% for activity in attention_activities[:5] %}
-    {% set open_slots = (activity.expected_bike_count or 1) - activity.assigned_bike_count %}
-    <a class="dashboard-attention-row" href="/activities/{{ activity.public_id }}">
-      <span class="dashboard-attention-icon" aria-hidden="true">!</span>
-      <div>
-        <h3>{{ activity.name or 'Untitled activity' }}</h3>
-        <p>{{ activity.started_at|activity_datetime }} · {{ activity.duration_label }} · {% if activity.strava_gear_todo %}Strava bike differs{% elif not activity.expected_bike_count %}Bike count missing{% else %}{{ open_slots }} bike slot{{ 's' if open_slots != 1 else '' }} open{% endif %}</p>
-      </div>
-      <strong>{{ ((activity.distance_m or 0) / 1000)|km }} km</strong>
-    </a>
-    {% endfor %}
-  </div>
-</section>
-{% endif %}
 
 <section class="dashboard-section">
   <div class="dashboard-section-heading">
