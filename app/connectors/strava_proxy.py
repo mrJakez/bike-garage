@@ -139,12 +139,19 @@ def fetch_bikes(endpoint_url: str, api_key: str | None, account_identifier: str,
     return [item for item in payload if isinstance(item, dict)]
 
 
-def update_activity_gear(endpoint_url: str, api_key: str | None, account_identifier: str,
-                         activity_id: str, gear_id: str, *, description: str | None = None) -> dict:
-    """Set a Strava activity's gear and optionally append an audit note."""
-    update_payload = {"gear_id": gear_id}
+def update_activity(endpoint_url: str, api_key: str | None, account_identifier: str, activity_id: str, *,
+                    gear_id: str | None = None, sport_type: str | None = None,
+                    description: str | None = None) -> dict:
+    """Update the configured Bike Garage fields of a Strava activity."""
+    update_payload: dict[str, str] = {}
+    if gear_id is not None:
+        update_payload["gear_id"] = gear_id
+    if sport_type is not None:
+        update_payload["sport_type"] = sport_type
     if description is not None:
         update_payload["description"] = description
+    if not update_payload:
+        raise ValueError("At least one Strava activity field must be provided.")
     payload = _authenticated_request(
         endpoint_url,
         api_key,
@@ -155,3 +162,10 @@ def update_activity_gear(endpoint_url: str, api_key: str | None, account_identif
     if not isinstance(payload, dict):
         raise ValueError("The proxy activity update returned an unexpected response.")
     return payload
+
+
+def update_activity_gear(endpoint_url: str, api_key: str | None, account_identifier: str,
+                         activity_id: str, gear_id: str, *, description: str | None = None) -> dict:
+    """Backward-compatible helper for callers that update only the gear."""
+    return update_activity(endpoint_url, api_key, account_identifier, activity_id, gear_id=gear_id,
+                           description=description)

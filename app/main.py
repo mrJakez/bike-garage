@@ -19,7 +19,7 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from starlette.middleware.sessions import SessionMiddleware
 
-from .connectors.strava_proxy import fetch_activity as fetch_strava_activity, fetch_bikes as fetch_strava_bikes, health_check, normalise_base_url, test_connection, update_activity_gear as update_strava_activity_gear
+from .connectors.strava_proxy import fetch_activity as fetch_strava_activity, fetch_bikes as fetch_strava_bikes, health_check, normalise_base_url, test_connection, update_activity as update_strava_activity
 from .connectors.hammerhead import DEFAULT_API_BASE_URL, authorization_url as hammerhead_authorization_url, exchange_code as exchange_hammerhead_code, fetch_activity_detail as fetch_hammerhead_activity_detail, fetch_activity_fit as fetch_hammerhead_activity_fit, normalise_base_url as normalise_hammerhead_base_url, test_connection as test_hammerhead_connection
 from .database import connection, initial_user, initialise_database
 from .auth import complete_authentication, complete_registration, has_passkey, issue_authentication_options, issue_registration_options, registration_enabled
@@ -35,19 +35,22 @@ LOCAL_TIMEZONE = ZoneInfo("Europe/Berlin")
 
 
 def ghcr_build_metadata() -> dict[str, str] | None:
-    """Expose immutable image provenance only for published GHCR images."""
-    if os.getenv("BIKE_GARAGE_BUILD_SOURCE") != "ghcr":
-        return None
-    revision = os.getenv("BIKE_GARAGE_BUILD_GIT_SHA", "").strip()
-    committed_at = os.getenv("BIKE_GARAGE_BUILD_COMMIT_DATE", "").strip()
-    if not revision or not committed_at:
-        return None
-    try:
-        committed_at = datetime.fromisoformat(committed_at.replace("Z", "+00:00")).astimezone(UTC)
-    except ValueError:
-        return None
+    """Provide published-image provenance, or a clear local-development marker."""
+    if os.getenv("BIKE_GARAGE_BUILD_SOURCE") == "ghcr":
+        revision = os.getenv("BIKE_GARAGE_BUILD_GIT_SHA", "").strip()
+        raw_committed_at = os.getenv("BIKE_GARAGE_BUILD_COMMIT_DATE", "").strip()
+        if not revision or not raw_committed_at:
+            return None
+        try:
+            committed_at = datetime.fromisoformat(raw_committed_at.replace("Z", "+00:00")).astimezone(UTC)
+        except ValueError:
+            return None
+    else:
+        revision = "DEV"
+        committed_at = datetime.now(UTC)
     return {
         "revision": revision[:7],
+        "source": "Development build" if revision == "DEV" else "Published build",
         "committed_at": committed_at.strftime("%Y-%m-%d %H:%M UTC"),
         "committed_at_iso": committed_at.isoformat().replace("+00:00", "Z"),
     }
@@ -89,6 +92,27 @@ def format_activity_datetime(value: object) -> str:
         return parsed.strftime("%d.%m.%Y · %H:%M")
     except (TypeError, ValueError):
         return str(value)
+
+
+def activity_datetime_part(value: object, pattern: str, fallback: str) -> str:
+    """Format one human-readable part of a provider activity timestamp."""
+    if not value:
+        return fallback
+    try:
+        parsed = datetime.fromisoformat(str(value).replace("Z", "+00:00"))
+        if parsed.tzinfo is not None:
+            parsed = parsed.astimezone(LOCAL_TIMEZONE)
+        return parsed.strftime(pattern)
+    except (TypeError, ValueError):
+        return fallback
+
+
+def format_activity_date(value: object) -> str:
+    return activity_datetime_part(value, "%d.%m.%Y", "Unknown date")
+
+
+def format_activity_time(value: object) -> str:
+    return activity_datetime_part(value, "%H:%M", "—")
 
 
 def format_log_datetime(value: object) -> str:
@@ -148,6 +172,8 @@ def attach_bike_mileage(db: object, bikes: list[dict[str, object]], user_id: int
 
 
 templates.env.filters["activity_datetime"] = format_activity_datetime
+templates.env.filters["activity_date"] = format_activity_date
+templates.env.filters["activity_time"] = format_activity_time
 templates.env.filters["log_datetime"] = format_log_datetime
 templates.env.filters["km"] = format_kilometres
 app = FastAPI(title="Bike Garage")
@@ -205,6 +231,14 @@ STRAVA_ACTIVITY_TYPES = (
 )
 
 BIKE_TYPES = ("Road", "Gravel", "Mountainbike")
+BIKE_STRAVA_ACTIVITY_TYPES = (
+    ("Ride", "Radfahrt"),
+    ("GravelRide", "Schotterfahrt"),
+    ("EBikeRide", "E-Bike-Radfahrt"),
+    ("MountainBikeRide", "Mountainbike-Fahrt"),
+)
+BIKE_STRAVA_ACTIVITY_TYPE_VALUES = frozenset(value for value, _ in BIKE_STRAVA_ACTIVITY_TYPES)
+BIKE_STRAVA_ACTIVITY_TYPE_LABELS = dict(BIKE_STRAVA_ACTIVITY_TYPES)
 BIKE_COMPONENT_TYPES = (
     ("shifting", "Electronic shifting"),
     ("bike_power", "Bike power / crank"),
@@ -380,7 +414,7 @@ def save_bike_strava_gears(db: object, bike_id: int, gear_ids: list[str]) -> Non
 
 
 def strava_gear_mismatches(db: object, activity_id: int) -> list[dict[str, object]]:
-    """Return Strava sources whose configured gear differs from the resolved bike."""
+    """Return Strava sources whose configured bike or activity type differs."""
     activity = db.execute(
         "SELECT started_at_epoch FROM activities WHERE id=? AND deleted_at IS NULL", (activity_id,)
     ).fetchone()
@@ -391,7 +425,7 @@ def strava_gear_mismatches(db: object, activity_id: int) -> list[dict[str, objec
     ).fetchone()
     garage_start_epoch = settings["mileage_tracking_started_at_epoch"] if settings else None
     rows = db.execute(
-        """SELECT pa.id AS provider_activity_id, pa.external_activity_id, pa.raw_json,
+        """SELECT pa.id AS provider_activity_id, pa.external_activity_id, pa.sport_type AS current_sport_type, pa.raw_json,
                   pc.id AS connection_id, pc.display_name AS connection_name, pc.endpoint_url,
                   pc.access_token, pc.external_account_id
            FROM activity_provider_links apl
@@ -403,8 +437,9 @@ def strava_gear_mismatches(db: object, activity_id: int) -> list[dict[str, objec
     mismatches: list[dict[str, object]] = []
     for row in rows:
         mapping = db.execute(
-            """SELECT sg.external_gear_id, sg.name FROM activity_bike_assignments aba
+            """SELECT sg.external_gear_id, sg.name, b.strava_activity_type FROM activity_bike_assignments aba
                JOIN bike_strava_gear_mappings mapping ON mapping.bike_id=aba.bike_id
+               JOIN bikes b ON b.id=aba.bike_id
                JOIN strava_gears sg ON sg.id=mapping.strava_gear_id
                WHERE aba.activity_id=? AND sg.provider_connection_id=?
                ORDER BY aba.slot_index LIMIT 1""",
@@ -417,7 +452,11 @@ def strava_gear_mismatches(db: object, activity_id: int) -> list[dict[str, objec
         except (TypeError, json.JSONDecodeError):
             payload = {}
         current_gear_id = str(payload.get("gear_id") or "")
-        if current_gear_id == mapping["external_gear_id"]:
+        current_sport_type = str(payload.get("sport_type") or row["current_sport_type"] or "")
+        gear_mismatch = current_gear_id != mapping["external_gear_id"]
+        desired_sport_type = mapping["strava_activity_type"]
+        activity_type_mismatch = bool(desired_sport_type and current_sport_type != desired_sport_type)
+        if not gear_mismatch and not activity_type_mismatch:
             continue
         current_gear = db.execute(
             "SELECT name FROM strava_gears WHERE provider_connection_id=? AND external_gear_id=?",
@@ -429,13 +468,19 @@ def strava_gear_mismatches(db: object, activity_id: int) -> list[dict[str, objec
             "desired_gear_name": mapping["name"],
             "current_gear_id": current_gear_id,
             "current_gear_name": current_gear["name"] if current_gear else (current_gear_id or "No bike"),
+            "gear_mismatch": gear_mismatch,
+            "desired_sport_type": desired_sport_type,
+            "desired_sport_type_label": BIKE_STRAVA_ACTIVITY_TYPE_LABELS.get(desired_sport_type, desired_sport_type),
+            "current_sport_type": current_sport_type or "Unknown type",
+            "current_sport_type_label": BIKE_STRAVA_ACTIVITY_TYPE_LABELS.get(current_sport_type, current_sport_type or "Unknown type"),
+            "activity_type_mismatch": activity_type_mismatch,
             "update_allowed": garage_start_epoch is not None and (activity["started_at_epoch"] or 0) >= garage_start_epoch,
         })
     return mismatches
 
 
 def sync_strava_activity_gears(db: object, activity_id: int, provider_activity_id: int | None = None) -> tuple[int, int]:
-    """Explicitly mirror a resolved bike to Strava after a user confirms it."""
+    """Mirror configured Bike Garage bike fields to the matching Strava source."""
     updated_count = 0
     skipped_count = 0
     for row in strava_gear_mismatches(db, activity_id):
@@ -453,7 +498,12 @@ def sync_strava_activity_gears(db: object, activity_id: int, provider_activity_i
             current_payload = json.loads(row["raw_json"] or "{}")
         except (TypeError, json.JSONDecodeError):
             current_payload = {}
-        note = f"Bike Garage: {row['desired_gear_name']} (Before: {row['current_gear_name']})"
+        changes = []
+        if row["gear_mismatch"]:
+            changes.append(f"bike {row['desired_gear_name']} (Before: {row['current_gear_name']})")
+        if row["activity_type_mismatch"]:
+            changes.append(f"activity type {row['desired_sport_type']} (Before: {row['current_sport_type']})")
+        note = "Bike Garage: " + "; ".join(changes)
         existing_description = str(current_payload.get("description") or "").strip()
         # Do not erase a rider's own activity notes; append one concise audit
         # line for each actual Bike Garage correction instead.
@@ -461,9 +511,12 @@ def sync_strava_activity_gears(db: object, activity_id: int, provider_activity_i
             f"{existing_description}\n\n{note}" if existing_description else note
         )
         try:
-            updated = update_strava_activity_gear(
+            updated = update_strava_activity(
                 row["endpoint_url"], row["access_token"], row["external_account_id"],
-                row["external_activity_id"], row["desired_gear_id"], description=description,
+                row["external_activity_id"],
+                gear_id=row["desired_gear_id"] if row["gear_mismatch"] else None,
+                sport_type=row["desired_sport_type"] if row["activity_type_mismatch"] else None,
+                description=description,
             )
         except Exception as error:
             record_activity_log(
@@ -474,15 +527,16 @@ def sync_strava_activity_gears(db: object, activity_id: int, provider_activity_i
             continue
         payload = current_payload
         payload.update(updated)
-        payload["gear_id"] = row["desired_gear_id"]
+        if row["gear_mismatch"]:
+            payload["gear_id"] = row["desired_gear_id"]
+        if row["activity_type_mismatch"]:
+            payload["sport_type"] = row["desired_sport_type"]
         payload["description"] = description
-        db.execute("UPDATE provider_activities SET raw_json=? WHERE id=?", (json.dumps(payload), row["provider_activity_id"]))
-        old = row["current_gear_name"]
-        record_activity_log(
-            db, activity_id,
-            f"Strava bike updated for {row['connection_name']}: {old} → {row['desired_gear_name']}.",
-            logger="STRAVA",
+        db.execute(
+            "UPDATE provider_activities SET raw_json=?, sport_type=COALESCE(?, sport_type) WHERE id=?",
+            (json.dumps(payload), row["desired_sport_type"] if row["activity_type_mismatch"] else None, row["provider_activity_id"]),
         )
+        record_activity_log(db, activity_id, f"Strava updated for {row['connection_name']}: {note.removeprefix('Bike Garage: ')}.", logger="STRAVA")
         updated_count += 1
     return updated_count, skipped_count
 
@@ -504,6 +558,17 @@ def duration_label(value: object, *, milliseconds: bool = False) -> str:
     except (TypeError, ValueError):
         return "—"
     return str(timedelta(seconds=max(0, seconds)))
+
+
+def provider_duration(payload: dict[str, object], provider_type: str | None) -> object:
+    """Read a provider duration from the normalized payload or its raw source."""
+    if provider_type == "HAMMERHEAD":
+        duration = payload.get("duration")
+        if duration is not None:
+            return duration
+        raw_hammerhead = payload.get("raw_hammerhead")
+        return raw_hammerhead.get("duration") if isinstance(raw_hammerhead, dict) else None
+    return payload.get("moving_time") or payload.get("elapsed_time")
 
 
 def record_activity_log(db: object, activity_id: int, message: str, *, logger: str = "UI") -> None:
@@ -687,11 +752,7 @@ def page_context(request: Request, *, activity_filters: dict[str, object] | None
                         or (payload.get("raw_hammerhead") or {}).get("polyline")
                     )
                 if activity["duration_label"] == "—":
-                    raw_duration = (
-                        payload.get("duration")
-                        if provider["provider_type"] == "HAMMERHEAD"
-                        else payload.get("moving_time") or payload.get("elapsed_time")
-                    )
+                    raw_duration = provider_duration(payload, provider["provider_type"])
                     activity["duration_label"] = duration_label(
                         raw_duration, milliseconds=provider["provider_type"] == "HAMMERHEAD"
                     )
@@ -1639,7 +1700,7 @@ def activity_detail(request: Request, activity_uuid: str):
         item["device_name"] = payload.get("device_name") or ""
         item["gear_id"] = payload.get("gear_id") or ""
         item["moving_time"] = payload.get("moving_time")
-        raw_duration = payload.get("duration") if item["provider_type"] == "HAMMERHEAD" else payload.get("moving_time") or payload.get("elapsed_time")
+        raw_duration = provider_duration(payload, item["provider_type"])
         item["duration_label"] = duration_label(raw_duration, milliseconds=item["provider_type"] == "HAMMERHEAD")
         if route_polyline is None:
             route_polyline = (
@@ -1690,7 +1751,7 @@ def activity_detail(request: Request, activity_uuid: str):
 
 @app.post("/activities/{activity_uuid}/strava-bikes/{provider_activity_id}/update")
 def update_activity_strava_bike(activity_uuid: str, provider_activity_id: int):
-    """Push one resolved bike to the matching Strava source after confirmation."""
+    """Push configured Bike Garage bike fields to one matching Strava source."""
     with connection() as db:
         activity = db.execute(
             "SELECT id FROM activities WHERE public_id=? AND deleted_at IS NULL", (activity_uuid,)
@@ -1710,11 +1771,11 @@ def update_activity_strava_bike(activity_uuid: str, provider_activity_id: int):
             )
         updated, skipped = sync_strava_activity_gears(db, activity["id"], provider_activity_id)
     if updated:
-        notice = "Strava bike updated"
+        notice = "Strava updated"
     elif skipped:
-        notice = "Strava bike was not updated: activity is before Garage start"
+        notice = "Strava was not updated: activity is before Garage start"
     else:
-        notice = "Strava bike is already up to date or no matching Bike Garage gear is configured"
+        notice = "Strava is already up to date or no matching Bike Garage mapping is configured"
     return RedirectResponse(f"/activities/{activity_uuid}?" + urlencode({"notice": notice}), status_code=303)
 
 
@@ -1755,7 +1816,7 @@ def provider_activity_detail(request: Request, provider_activity_id: int):
         or payload.get("polyline")
         or (payload.get("raw_hammerhead") or {}).get("polyline")
     )
-    raw_duration = payload.get("duration") if source["provider_type"] == "HAMMERHEAD" else payload.get("moving_time") or payload.get("elapsed_time")
+    raw_duration = provider_duration(payload, source["provider_type"])
     source["duration_label"] = duration_label(raw_duration, milliseconds=source["provider_type"] == "HAMMERHEAD")
     source["raw_payload_pretty"] = json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True)
 
@@ -2093,7 +2154,8 @@ def new_bike_page(request: Request):
         gears = strava_gear_options(db)
     return templates.TemplateResponse(
         request, "bike_form.html",
-        page_context(request, bike=None, components={}, strava_gears=gears, strava_gear_errors=gear_errors),
+        page_context(request, bike=None, components={}, strava_gears=gears, strava_gear_errors=gear_errors,
+                     bike_strava_activity_types=BIKE_STRAVA_ACTIVITY_TYPES),
     )
 
 
@@ -2155,6 +2217,7 @@ async def create_bike(
     shifting_ant_device_number: str | None = Form(None), bike_power_ant_device_number: str | None = Form(None),
     seatpost_ant_device_number: str | None = Form(None),
     strava_gear_ids: list[str] = Form([]),
+    strava_activity_type: str | None = Form(None),
 ):
     if not name or not identifier or not bike_type:
         return RedirectResponse(
@@ -2165,6 +2228,10 @@ async def create_bike(
         return RedirectResponse(
             "/bikes/new?" + urlencode({"notice": "Choose Road, Gravel, or Mountainbike as the bike type."}),
             status_code=303,
+        )
+    if strava_activity_type and strava_activity_type not in BIKE_STRAVA_ACTIVITY_TYPE_VALUES:
+        return RedirectResponse(
+            "/bikes/new?" + urlencode({"notice": "Choose a valid Strava activity type."}), status_code=303
         )
     try:
         photo_filename = save_photo(photo) if photo and photo.filename else placeholder_photo_filename()
@@ -2182,10 +2249,10 @@ async def create_bike(
             return RedirectResponse("/bikes/new?" + urlencode({"notice": str(error)}), status_code=303)
         cursor = db.execute(
             """INSERT INTO bikes
-               (user_id, name, identifier, bike_type, owner_name, frame_number, details_markdown, photo_filename, starting_mileage_m)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+               (user_id, name, identifier, bike_type, owner_name, frame_number, details_markdown, photo_filename, starting_mileage_m, strava_activity_type)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
             (user["id"], name.strip(), identifier.strip(), bike_type.strip(), user["display_name"], cleaned_frame_number,
-             cleaned_details_markdown, photo_filename, starting_mileage_m),
+             cleaned_details_markdown, photo_filename, starting_mileage_m, strava_activity_type or None),
         )
         save_bike_components(db, cursor.lastrowid, component_ant_ids)
         save_bike_strava_gears(db, cursor.lastrowid, strava_gear_ids)
@@ -2255,7 +2322,8 @@ def edit_bike_page(request: Request, bike_id: int):
         return RedirectResponse("/bikes?notice=Bike+not+found", status_code=303)
     return templates.TemplateResponse(
         request, "bike_form.html",
-        page_context(request, bike=bike, components=components, strava_gears=gears, strava_gear_errors=gear_errors),
+        page_context(request, bike=bike, components=components, strava_gears=gears, strava_gear_errors=gear_errors,
+                     bike_strava_activity_types=BIKE_STRAVA_ACTIVITY_TYPES),
     )
 
 
@@ -2268,6 +2336,7 @@ async def update_bike(
     shifting_ant_device_number: str | None = Form(None), bike_power_ant_device_number: str | None = Form(None),
     seatpost_ant_device_number: str | None = Form(None),
     strava_gear_ids: list[str] = Form([]),
+    strava_activity_type: str | None = Form(None),
 ):
     if not name or not identifier or not bike_type:
         return RedirectResponse(
@@ -2277,6 +2346,11 @@ async def update_bike(
     if bike_type not in BIKE_TYPES:
         return RedirectResponse(
             f"/bikes/{bike_id}/edit?" + urlencode({"notice": "Choose Road, Gravel, or Mountainbike as the bike type."}),
+            status_code=303,
+        )
+    if strava_activity_type and strava_activity_type not in BIKE_STRAVA_ACTIVITY_TYPE_VALUES:
+        return RedirectResponse(
+            f"/bikes/{bike_id}/edit?" + urlencode({"notice": "Choose a valid Strava activity type."}),
             status_code=303,
         )
     try:
@@ -2309,9 +2383,9 @@ async def update_bike(
             return RedirectResponse(f"/bikes/{bike_id}/edit?" + urlencode({"notice": str(error)}), status_code=303)
         db.execute(
             """UPDATE bikes SET name=?, identifier=?, bike_type=?, frame_number=?, details_markdown=?, photo_filename=?,
-               starting_mileage_m=?, updated_at=CURRENT_TIMESTAMP WHERE id=?""",
+               starting_mileage_m=?, strava_activity_type=?, updated_at=CURRENT_TIMESTAMP WHERE id=?""",
             (name.strip(), identifier.strip(), bike_type.strip(), cleaned_frame_number, cleaned_details_markdown,
-             photo_filename, starting_mileage_m, bike_id),
+             photo_filename, starting_mileage_m, strava_activity_type or None, bike_id),
         )
         save_bike_components(db, bike_id, component_ant_ids)
         save_bike_strava_gears(db, bike_id, strava_gear_ids)

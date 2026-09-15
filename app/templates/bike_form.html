@@ -72,6 +72,15 @@
       <p class="field-help">No cached Strava bikes yet. Connect a Strava Proxy account, then open this page again.</p>
       {% endif %}
       {% for error in strava_gear_errors or [] %}<p class="field-help strava-gear-error">Could not refresh Strava bikes: {{ error }}</p>{% endfor %}
+      <label class="bike-editor-field strava-activity-type-field">Strava activity type
+        <select class="bike-type-select" name="strava_activity_type">
+          <option value="">Keep the activity type from Strava</option>
+          {% for value, label in bike_strava_activity_types %}
+          <option value="{{ value }}" {% if editing and bike.strava_activity_type == value %}selected{% endif %}>{{ label }}</option>
+          {% endfor %}
+        </select>
+        <span class="field-help">Used for activities assigned to this bike. The automatic Strava update follows in the next step.</span>
+      </label>
     </section>
 
     <section class="bike-editor-card">
@@ -137,6 +146,7 @@
   .strava-gear-add { display:grid; grid-template-columns:minmax(0,1fr) auto; gap:10px; }
   .strava-gear-add select { width:100%; height:48px; padding:10px 44px 10px 13px; border:1px solid #cfcac0; border-radius:8px; background:#fff; color:var(--ink); font:inherit; font-weight:600; appearance:none; -webkit-appearance:none; }
   .strava-gear-error { color:#9b4f18; }
+  .strava-activity-type-field { max-width:420px; margin-top:20px; }
   @media (max-width:900px) { .bike-editor { grid-template-columns:1fr; } .bike-editor-media { position:static; display:grid; grid-template-columns:150px 1fr; align-items:center; gap:0 18px; text-align:left; } .bike-editor-media .field-help { grid-column:2; } }
   @media (max-width:620px) { .bike-field-grid, .component-editor-item { grid-template-columns:1fr; } .bike-editor-card { padding:18px; } .section-heading { display:block; } .section-heading > p { margin-top:8px; } .component-editor-icon { display:none; } .component-id-field { max-width:none; } .bike-editor-media { grid-template-columns:1fr; text-align:center; } .bike-editor-media .field-help { grid-column:auto; text-align:left; } .bike-photo-frame { max-width:220px; margin:auto; width:100%; } .strava-gear-add { grid-template-columns:1fr; } }
 </style>

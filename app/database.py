@@ -72,6 +72,7 @@ def initialise_database() -> None:
                 details_markdown TEXT NOT NULL DEFAULT '',
                 photo_filename TEXT NOT NULL,
                 starting_mileage_m REAL NOT NULL DEFAULT 0,
+                strava_activity_type TEXT,
                 created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
                 updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
             );
@@ -304,6 +305,8 @@ def initialise_database() -> None:
             db.execute("ALTER TABLE bikes ADD COLUMN frame_number TEXT")
         if "details_markdown" not in bike_columns:
             db.execute("ALTER TABLE bikes ADD COLUMN details_markdown TEXT NOT NULL DEFAULT ''")
+        if "strava_activity_type" not in bike_columns:
+            db.execute("ALTER TABLE bikes ADD COLUMN strava_activity_type TEXT")
         if "expected_bike_count" not in activity_columns:
             db.execute("ALTER TABLE activities ADD COLUMN expected_bike_count INTEGER NOT NULL DEFAULT 1")
         if "rule_hash" not in activity_columns:
