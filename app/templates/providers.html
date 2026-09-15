@@ -27,7 +27,7 @@
 <div class="provider-grid">
   {% for key, provider in providers.items() %}
   <section class="card provider-card">
-    <img class="provider-icon" src="/static/provider-{{ provider.icon }}.svg" alt="{{ provider.name }}">
+    <img class="provider-icon" src="/static/provider-{{ provider.icon }}.svg?v=3" alt="{{ provider.name }}">
     <h2>{{ provider.name }}</h2>
     <p>{{ provider.description }}</p>
     <a class="button secondary" href="/providers/{{ key }}/connect">Connect {{ provider.name }}</a>
@@ -39,7 +39,7 @@
   <div class="connections">
   {% for item in connections %}
     <div class="connection-row">
-      <div class="connection-provider"><img class="provider-mark provider-mark-connection" src="/static/provider-{{ providers[item.provider_type].icon }}.svg" alt="{{ providers[item.provider_type].name }}"><div><strong>{{ providers[item.provider_type].name }} · {{ item.display_name }}</strong><span>Connection ID: <code>{{ item.identifier }}</code>{% if item.external_account_id %} · Provider account: {{ item.external_account_id }}{% endif %}</span></div></div>
+      <div class="connection-provider"><img class="provider-mark provider-mark-connection" src="/static/provider-{{ providers[item.provider_type].icon }}.svg?v=3" alt="{{ providers[item.provider_type].name }}"><div><strong>{{ providers[item.provider_type].name }} · {{ item.display_name }}</strong><span>Connection ID: <code>{{ item.identifier }}</code>{% if item.external_account_id %} · Provider account: {{ item.external_account_id }}{% endif %}</span></div></div>
       <div class="connection-actions"><span class="status-chip {{ item.status|lower }}">{{ item.status.replace('_', ' ') }}</span><div class="connection-buttons connection-icon-buttons">{% if item.status == 'DISCONNECTED' %}<form method="post" action="/connections/{{ item.id }}/activate"><button class="connection-icon-button activate" type="submit" title="Activate connection" aria-label="Activate connection"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m9 5 10 7-10 7z"/></svg></button></form>{% else %}<form method="post" action="/connections/{{ item.id }}/deactivate"><button class="connection-icon-button deactivate" type="submit" title="Deactivate connection" aria-label="Deactivate connection"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M8 5v14M16 5v14"/></svg></button></form>{% endif %}<a class="connection-icon-button" href="/connections/{{ item.id }}/edit" title="Edit connection" aria-label="Edit connection"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="m4 16.5-.5 4 4-.5L19 8.5 15.5 5zM13.8 6.7l3.5 3.5"/></svg></a><form method="post" action="/connections/{{ item.id }}/test"><button class="connection-icon-button" type="submit" title="Test connection" aria-label="Test connection"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M9 3h6M10 3v5l-4 9a3 3 0 0 0 2.8 4h6.4a3 3 0 0 0 2.8-4l-4-9V3M8 14h8"/></svg></button></form><form method="post" action="/connections/{{ item.id }}/delete" onsubmit="return confirm('Delete this provider connection and its imported activities? Activities also linked to another provider will be kept.');"><button class="connection-icon-button delete" type="submit" title="Delete connection" aria-label="Delete connection"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7h16M9 7V4h6v3m-8 0 1 13h8l1-13M10 11v5m4-5v5"/></svg></button></form></div></div>
     </div>
   {% endfor %}

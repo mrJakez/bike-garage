@@ -63,7 +63,7 @@
       <div class="activity-timing" aria-label="Activity details">
         <span><small>Date</small><time>{{ activity.started_at|activity_date }}</time></span><span><small>Start</small><time>{{ activity.started_at|activity_time }}</time></span><span><small>Duration</small><b>{{ activity.duration_label }}</b></span><span><small>Type</small><b>{{ activity.sport_type or 'Unknown sport' }}</b></span>
         <span class="activity-timing-bikes"><small>Bikes</small><b>{% if activity.bike_assignments %}<span class="activity-bike-icons" aria-hidden="true">{% for bike in activity.bike_assignments %}{% if bike.photo_filename %}<img src="/bike-photos/{{ bike.photo_filename }}" alt="" title="{{ bike.name }}" loading="lazy">{% else %}<span title="{{ bike.name }}">🚲</span>{% endif %}{% endfor %}</span><span>{{ activity.assigned_bike_count }} / {{ activity.expected_bike_count or '—' }} · {% for bike in activity.bike_assignments %}{{ bike.name }}{% if not loop.last %}, {% endif %}{% endfor %}</span>{% else %}—{% endif %}{% if activity.bike_assignment_todo and not activity.strava_gear_todo %}{% set open_slots = (activity.expected_bike_count - activity.assigned_bike_count) if activity.expected_bike_count else 1 %}<em> · {% if not activity.expected_bike_count %}Bike count missing{% else %}{{ open_slots }} slot{% if open_slots != 1 %}s{% endif %} open{% endif %}</em>{% endif %}</b></span>
-        <span class="activity-timing-providers"><small>Providers</small><b><span class="activity-provider-icons" aria-label="{{ activity.source_count }} provider source{% if activity.source_count != 1 %}s{% endif %}">{% for provider_type in activity.provider_types %}<img src="/static/provider-{{ 'strava' if provider_type == 'STRAVA_PROXY' else 'hammerhead' }}.svg" alt="{{ 'Strava' if provider_type == 'STRAVA_PROXY' else 'Hammerhead' }}" title="{{ 'Strava' if provider_type == 'STRAVA_PROXY' else 'Hammerhead' }}">{% endfor %}</span></b></span>
+        <span class="activity-timing-providers"><small>Providers</small><b><span class="activity-provider-icons" aria-label="{{ activity.source_count }} provider source{% if activity.source_count != 1 %}s{% endif %}">{% for provider_type in activity.provider_types %}<img src="/static/provider-{{ 'strava' if provider_type == 'STRAVA_PROXY' else 'hammerhead' }}.svg?v=3" alt="{{ 'Strava' if provider_type == 'STRAVA_PROXY' else 'Hammerhead' }}" title="{{ 'Strava' if provider_type == 'STRAVA_PROXY' else 'Hammerhead' }}">{% endfor %}</span></b></span>
       </div>
     </div><div class="activity-metrics"><strong>{{ ((activity.distance_m or 0) / 1000)|km }} km</strong></div>
   </article></a>
@@ -143,14 +143,14 @@
   @container activity-card (max-width:640px){
     .activity-preview-row{grid-template-columns:1fr}
     .activity-route-preview{height:124px;min-height:124px;border-right:0;border-bottom:1px solid var(--line)}
-    .activity-preview-row .activity-main{padding:14px}
-    .activity-preview-row .activity-metrics{top:142px;right:14px}
-    .activity-timing{grid-template-columns:repeat(2,minmax(0,1fr));grid-template-areas:"date start" "duration type" "bikes providers";margin-top:11px}
+    .activity-preview-row .activity-main{padding:11px 12px 12px}.activity-preview-row .activity-main h2{font-size:.94rem}
+    .activity-preview-row .activity-metrics{top:137px;right:12px}
+    .activity-timing{grid-template-columns:repeat(2,minmax(0,1fr));grid-template-areas:"date start" "duration type" "bikes providers";gap:6px 0;margin-top:8px}
     .activity-timing>span,.activity-timing>span:first-child,.activity-timing>span:nth-child(3),.activity-timing-bikes,.activity-timing-providers{padding:0 10px!important;border:0!important}
     .activity-timing>span:nth-child(1),.activity-timing>span:nth-child(3),.activity-timing-bikes,.activity-timing-providers{padding-left:0!important}
     .activity-timing>span:nth-child(2),.activity-timing>span:nth-child(4),.activity-timing-providers{border-left:1px solid var(--line)!important;padding-left:10px!important}
-    .activity-timing small{font-size:.6rem}.activity-timing time,.activity-timing b{font-size:.78rem}
-    .activity-bike-icons img,.activity-bike-icons span{width:30px;height:30px}.activity-provider-icons img{width:27px;height:27px}
+    .activity-timing small{font-size:.56rem;line-height:1}.activity-timing time,.activity-timing b{font-size:.73rem;line-height:1.2}
+    .activity-timing-bikes b,.activity-timing-providers b{gap:4px}.activity-bike-icons img,.activity-bike-icons span{width:26px;height:26px}.activity-provider-icons img{width:24px;height:24px;padding:2px}
   }
 </style>
 <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>

@@ -1,6 +1,6 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 48 48" role="img" aria-labelledby="title">
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" role="img" aria-labelledby="title">
   <title>Hammerhead</title>
-  <rect width="48" height="48" rx="12" fill="#222c2b"/>
-  <path fill="#f5a623" d="M11 27.5 24 10l13 17.5-5 3.5-8-10.8L16 31l-5-3.5Z"/>
-  <path fill="#55c2bb" d="M15 30.5 24 18l9 12.5-4.7 3.2L24 27.6l-4.3 6.1-4.7-3.2Z"/>
+  <rect width="512" height="512" fill="#000"/>
+  <path d="M256 82c8 0 15 3 21 9l145 145c11 11 11 29 0 40L276 422c-11 11-29 11-40 0L90 276c-11-11-11-29 0-40L235 91c6-6 13-9 21-9Z" fill="none" stroke="#fff" stroke-width="16" stroke-linejoin="round"/>
+  <path d="M162 162h66v57h56v-57h66v188h-66v-57h-56v57h-66V162Z" fill="#000" stroke="#fff" stroke-width="16" stroke-linejoin="round"/>
 </svg>

@@ -80,7 +80,7 @@
           {% if activity.bike_assignment_todo %}<em>{{ (activity.expected_bike_count or 1) - activity.assigned_bike_count }} slot{% if ((activity.expected_bike_count or 1) - activity.assigned_bike_count) != 1 %}s{% endif %} open</em>{% endif %}
         </div>
       </div>
-      <div class="dashboard-activity-metrics"><strong>{{ ((activity.distance_m or 0) / 1000)|km }} km</strong><span class="provider-source-marks" aria-label="{{ activity.source_count }} provider source{% if activity.source_count != 1 %}s{% endif %}">{% for provider_type in activity.provider_types %}<img class="provider-mark" src="/static/provider-{{ 'strava' if provider_type == 'STRAVA_PROXY' else 'hammerhead' }}.svg" alt="{{ 'Strava' if provider_type == 'STRAVA_PROXY' else 'Hammerhead' }}">{% endfor %}</span></div>
+      <div class="dashboard-activity-metrics"><strong>{{ ((activity.distance_m or 0) / 1000)|km }} km</strong><span class="provider-source-marks" aria-label="{{ activity.source_count }} provider source{% if activity.source_count != 1 %}s{% endif %}">{% for provider_type in activity.provider_types %}<img class="provider-mark" src="/static/provider-{{ 'strava' if provider_type == 'STRAVA_PROXY' else 'hammerhead' }}.svg?v=3" alt="{{ 'Strava' if provider_type == 'STRAVA_PROXY' else 'Hammerhead' }}">{% endfor %}</span></div>
     </a>
     {% endfor %}
   </div>
