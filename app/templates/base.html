@@ -5,12 +5,18 @@
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <title>{% block title %}Bike Garage{% endblock %}</title>
     <link rel="icon" type="image/svg+xml" href="/static/bike-garage-icon.svg">
-    <link rel="stylesheet" href="/static/app.css?v=8">
+    <link rel="stylesheet" href="/static/app.css?v=11">
     <style>.notice{font-size:1.05rem;font-weight:700;border:1px solid #b9d8c8;border-left:5px solid var(--green);padding:16px 18px;border-radius:10px;box-shadow:0 2px 8px #1d242314}.notice.error{background:#fff0ed;color:#a33b2f;border-color:#e6b8b0;border-left-color:#c84d3e}.notice.success{background:#e8f2ed;color:var(--green)}</style>
   </head>
   <body>
-    <aside>
+    <header class="mobile-navigation-bar">
+      <button class="mobile-menu-toggle" type="button" aria-controls="primary-navigation" aria-expanded="false" data-mobile-menu-open><span aria-hidden="true"></span><span class="sr-only">Open navigation</span></button>
+      <a class="mobile-brand" href="/"><img src="/static/bike-garage-icon.svg" alt="">BIKE GARAGE</a>
+    </header>
+    <button class="mobile-nav-backdrop" type="button" aria-label="Close navigation" data-mobile-menu-backdrop hidden></button>
+    <aside id="primary-navigation" data-mobile-navigation>
       <a class="brand" href="/"><img src="/static/bike-garage-icon.svg" alt="">BIKE GARAGE</a>
+      <button class="mobile-menu-close" type="button" aria-label="Close navigation" data-mobile-menu-close>×</button>
       <nav>
         <a class="{% if request.url.path == '/' %}active{% endif %}" href="/">
           <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/></svg>
@@ -43,5 +49,32 @@
       {% if request.query_params.get('notice') %}{% set notice = request.query_params.get('notice') %}{% set is_error = ('invalid' in notice|lower or 'required' in notice|lower or 'error' in notice|lower or 'failed' in notice|lower or 'not found' in notice|lower) %}<div class="notice {{ 'error' if is_error else 'success' }}" role="alert">{{ notice }}</div>{% endif %}
       {% block content %}{% endblock %}
     </main>
+    <script>
+      (() => {
+        const navigation = document.querySelector('[data-mobile-navigation]');
+        const openButton = document.querySelector('[data-mobile-menu-open]');
+        const closeButton = document.querySelector('[data-mobile-menu-close]');
+        const backdrop = document.querySelector('[data-mobile-menu-backdrop]');
+        if (!navigation || !openButton || !closeButton || !backdrop) return;
+        const close = () => {
+          navigation.classList.remove('is-open');
+          backdrop.hidden = true;
+          openButton.setAttribute('aria-expanded', 'false');
+          document.body.classList.remove('mobile-menu-open');
+        };
+        const open = () => {
+          navigation.classList.add('is-open');
+          backdrop.hidden = false;
+          openButton.setAttribute('aria-expanded', 'true');
+          document.body.classList.add('mobile-menu-open');
+          closeButton.focus();
+        };
+        openButton.addEventListener('click', open);
+        closeButton.addEventListener('click', close);
+        backdrop.addEventListener('click', close);
+        navigation.querySelectorAll('nav a').forEach(link => link.addEventListener('click', close));
+        document.addEventListener('keydown', event => { if (event.key === 'Escape') close(); });
+      })();
+    </script>
   </body>
 </html>
