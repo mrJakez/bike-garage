@@ -14,7 +14,7 @@ from datetime import datetime, timezone
 from typing import Any, Callable
 from urllib.error import HTTPError, URLError
 
-from .connectors.strava_proxy import fetch_activities
+from .connectors.strava_proxy import fetch_activities, update_activity as update_strava_activity
 from .connectors.hammerhead import (
     fetch_activities as fetch_hammerhead_activities,
     fetch_activity_detail as fetch_hammerhead_activity_detail,
@@ -30,6 +30,10 @@ try:
 except ValueError:
     DEFAULT_SYNC_INTERVAL_SECONDS = 300
 DEFAULT_SYNC_INTERVAL_SECONDS = max(60, min(86_400, DEFAULT_SYNC_INTERVAL_SECONDS))
+# Providers can publish an older activity after a newer one has already been
+# imported. Re-read this overlap on every sync so those late arrivals are not
+# skipped by the start-time cursor.
+SYNC_ACTIVITY_LOOKBACK_SECONDS = 28 * 24 * 60 * 60
 _stop = threading.Event()
 _scheduler_wake = threading.Event()
 
@@ -441,13 +445,14 @@ def import_connection(connection_row: Any) -> int:
             "SELECT MAX(started_at_epoch) FROM provider_activities WHERE connection_id = ?",
             (connection_row["id"],),
         ).fetchone()[0]
+    after = max(0, int(last) - SYNC_ACTIVITY_LOOKBACK_SECONDS) if last else None
     fetcher = fetch_hammerhead_activities if connection_row["provider_type"] == "HAMMERHEAD" else fetch_activities
     try:
         records = fetcher(
             connection_row["endpoint_url"] or "",
             connection_row["access_token"],
             connection_row["external_account_id"] or "",
-            after=int(last) if last else None,
+            after=after,
         )
     except HTTPError as error:
         if connection_row["provider_type"] != "HAMMERHEAD" or error.code != 401:
@@ -460,7 +465,7 @@ def import_connection(connection_row: Any) -> int:
             connection_row["endpoint_url"] or "",
             connection_row["access_token"],
             connection_row["external_account_id"] or "",
-            after=int(last) if last else None,
+            after=after,
         )
     imported = 0
     try:
@@ -731,8 +736,9 @@ def apply_rule(
         for slot_index, bike in enumerate(context.bikes[:resolved_count], start=1):
             if bike and bike.id:
                 db.execute("INSERT OR REPLACE INTO activity_bike_assignments (activity_id,bike_id,slot_index,source) VALUES (?,?,?,'RULE')", (activity_id,bike.id,slot_index))
-    # Resolver runs only calculate Bike Garage state. External Strava writes
-    # require an explicit confirmation from the activity detail page.
+    # Resolver runs only calculate Bike Garage state.  After the complete
+    # import settles, the opted-in Strava synchronization below may mirror
+    # resolved mappings to the provider.
     return True
 
 
@@ -745,6 +751,95 @@ def apply_stale_rules(db: Any) -> int:
         if apply_rule(db, activity["id"], activity["sport_type"], None):
             resolved += 1
     return resolved
+
+
+def sync_automatic_strava_updates(db: Any) -> tuple[int, int]:
+    """Correct mapped Strava sources after the importer and resolver have settled.
+
+    This deliberately runs only when the owner enabled it, and only within the
+    managed Garage period.  Both conditions keep a background import from
+    unexpectedly changing older rides.
+    """
+    settings = db.execute(
+        "SELECT mileage_tracking_started_at_epoch, strava_auto_update_enabled FROM user_settings ORDER BY user_id LIMIT 1"
+    ).fetchone()
+    if settings is None or not settings["strava_auto_update_enabled"] or settings["mileage_tracking_started_at_epoch"] is None:
+        return 0, 0
+    rows = db.execute(
+        """SELECT a.id AS activity_id, pa.id AS provider_activity_id, pa.external_activity_id,
+                  pa.sport_type AS current_sport_type, pa.raw_json, pc.id AS connection_id,
+                  pc.display_name AS connection_name, pc.endpoint_url, pc.access_token, pc.external_account_id
+           FROM activities a
+           JOIN activity_provider_links apl ON apl.activity_id=a.id
+           JOIN provider_activities pa ON pa.id=apl.provider_activity_id
+           JOIN provider_connections pc ON pc.id=pa.connection_id
+           WHERE a.deleted_at IS NULL AND a.started_at_epoch >= ? AND pc.provider_type='STRAVA_PROXY'""",
+        (settings["mileage_tracking_started_at_epoch"],),
+    ).fetchall()
+    updated_count = 0
+    failed_count = 0
+    for row in rows:
+        mapping = db.execute(
+            """SELECT sg.external_gear_id, sg.name, b.strava_activity_type FROM activity_bike_assignments aba
+               JOIN bike_strava_gear_mappings mapping ON mapping.bike_id=aba.bike_id
+               JOIN bikes b ON b.id=aba.bike_id
+               JOIN strava_gears sg ON sg.id=mapping.strava_gear_id
+               WHERE aba.activity_id=? AND sg.provider_connection_id=?
+               ORDER BY aba.slot_index LIMIT 1""",
+            (row["activity_id"], row["connection_id"]),
+        ).fetchone()
+        if mapping is None:
+            continue
+        try:
+            payload = json.loads(row["raw_json"] or "{}")
+        except (TypeError, json.JSONDecodeError):
+            payload = {}
+        current_gear_id = str(payload.get("gear_id") or "")
+        current_sport_type = str(payload.get("sport_type") or row["current_sport_type"] or "")
+        gear_mismatch = current_gear_id != mapping["external_gear_id"]
+        activity_type_mismatch = bool(mapping["strava_activity_type"] and current_sport_type != mapping["strava_activity_type"])
+        if not gear_mismatch and not activity_type_mismatch:
+            continue
+        changes = []
+        if gear_mismatch:
+            changes.append(f"bike {mapping['name']}")
+        if activity_type_mismatch:
+            changes.append(f"activity type {mapping['strava_activity_type']}")
+        note = "Bike Garage: " + "; ".join(changes)
+        existing_description = str(payload.get("description") or "").strip()
+        description = existing_description if note in existing_description else (
+            f"{existing_description}\n\n{note}" if existing_description else note
+        )
+        try:
+            updated = update_strava_activity(
+                row["endpoint_url"], row["access_token"], row["external_account_id"], row["external_activity_id"],
+                gear_id=mapping["external_gear_id"] if gear_mismatch else None,
+                sport_type=mapping["strava_activity_type"] if activity_type_mismatch else None,
+                description=description,
+            )
+        except Exception as error:
+            failed_count += 1
+            db.execute(
+                "INSERT INTO activity_log_entries (activity_id,logger,message) VALUES (?,?,?)",
+                (row["activity_id"], "STRAVA", f"Automatic Strava update failed for {row['connection_name']}: {error}"),
+            )
+            continue
+        payload.update(updated)
+        if gear_mismatch:
+            payload["gear_id"] = mapping["external_gear_id"]
+        if activity_type_mismatch:
+            payload["sport_type"] = mapping["strava_activity_type"]
+        payload["description"] = description
+        db.execute(
+            "UPDATE provider_activities SET raw_json=?, sport_type=COALESCE(?, sport_type) WHERE id=?",
+            (json.dumps(payload), mapping["strava_activity_type"] if activity_type_mismatch else None, row["provider_activity_id"]),
+        )
+        db.execute(
+            "INSERT INTO activity_log_entries (activity_id,logger,message) VALUES (?,?,?)",
+            (row["activity_id"], "STRAVA", f"Strava updated automatically for {row['connection_name']}: {'; '.join(changes)}."),
+        )
+        updated_count += 1
+    return updated_count, failed_count
 
 
 def apply_rule_assignment(line: str, context: ActivityContext, names: dict[str, object], functions: dict[str, object]) -> bool:
@@ -1591,10 +1686,10 @@ def separate_same_connection_sources() -> int:
 
 
 def sync_all_connections(
-    errors: list[str] | None = None, progress: Callable[[str], None] | None = None,
+    errors: list[str] | None = None, progress: Callable[[object], None] | None = None,
 ) -> int:
-    """Synchronize every active connection and optionally report human-readable progress."""
-    def report(message: str) -> None:
+    """Synchronize every active connection and optionally report structured progress."""
+    def report(message: object) -> None:
         if progress is not None:
             progress(message)
 
@@ -1603,24 +1698,30 @@ def sync_all_connections(
         connections = db.execute(
             "SELECT * FROM provider_connections WHERE provider_type IN ('STRAVA_PROXY', 'HAMMERHEAD') AND status = 'CONNECTED'"
         ).fetchall()
+    provider_labels = [
+        row["display_name"] or row["external_account_id"] or row["provider_type"]
+        for row in connections
+    ]
+    report({"type": "providers", "providers": provider_labels})
     if not connections:
-        report("No active provider connections found.")
+        report({"type": "overall", "status": "No active provider connections found."})
     for index, provider_connection in enumerate(connections, start=1):
         label = provider_connection["display_name"] or provider_connection["external_account_id"] or provider_connection["provider_type"]
-        report(f"Fetching activities from {label} ({index}/{len(connections)})…")
+        provider_index = index - 1
+        report({"type": "provider", "index": provider_index, "label": label, "state": "active", "status": "Fetching activities…"})
         try:
             imported = import_connection(provider_connection)
             total += imported
-            report(f"{label}: activity feed processed; {imported} new activity{'ies' if imported != 1 else ''} imported.")
+            report({"type": "provider", "index": provider_index, "label": label, "state": "complete", "status": f"{imported} new activit{'ies' if imported != 1 else 'y'} imported"})
         except Exception as error:
             # A single unavailable account must not stop the other connections.
-            report(f"{label}: unavailable; continuing with the remaining connections.")
+            report({"type": "provider", "index": provider_index, "label": label, "state": "failed", "status": "Could not be reached"})
             if errors is not None:
                 account = provider_connection["external_account_id"]
                 suffix = f" ({account})" if account else ""
                 errors.append(f"{label}{suffix}: {error}")
             continue
-    report("Reconciling provider records and applying rules…")
+    report({"type": "overall", "status": "Reconciling activities and applying rules…"})
     repair_hammerhead_start_times()
     repair_strava_local_start_times()
     separate_same_connection_sources()
@@ -1628,7 +1729,12 @@ def sync_all_connections(
     reconcile_single_source_activities()
     with connection() as db:
         apply_stale_rules(db)
-    report("Activity records are up to date.")
+        updated, failed = sync_automatic_strava_updates(db)
+    if updated:
+        report({"type": "overall", "status": f"Strava: {updated} mapped activit{'ies' if updated != 1 else 'y'} updated automatically."})
+    if failed:
+        report({"type": "overall", "status": f"Strava: {failed} automatic activit{'ies' if failed != 1 else 'y'} could not be updated; see the activity log."})
+    report({"type": "overall", "status": "Activity records are up to date."})
     return total
 
 

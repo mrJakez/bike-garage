@@ -43,7 +43,6 @@
       <div class="dashboard-bike-copy">
         <span class="dashboard-bike-type">{{ bike.bike_type }}</span>
         <h3>{{ bike.name }}</h3>
-        <p>{{ bike.identifier }}{% if bike.frame_number %} · Frame {{ bike.frame_number }}{% endif %}</p>
       </div>
       <div class="dashboard-mileage">
         <strong>{{ ((bike.total_mileage_m or 0) / 1000)|km }} <small>km</small></strong>
@@ -104,8 +103,9 @@
   .dashboard-bike-card > img { width:86px; height:68px; border-radius:8px; object-fit:contain; background:#f2f3ef; }
   .dashboard-bike-type { color:var(--green); font-size:.72rem; font-weight:800; letter-spacing:.06em; text-transform:uppercase; }
   .dashboard-bike-copy { min-width:0; }
-  .dashboard-bike-copy h3 { margin:2px 0 0; font-size:1.05rem; overflow-wrap:normal; word-break:normal; }
-  .dashboard-bike-copy p { margin:1px 0 0; color:var(--muted); font-size:.78rem; overflow-wrap:break-word; }
+  /* Keep card headers level: the dashboard is a quick overview, so internal
+     identifiers and frame serials stay on the bike detail page. */
+  .dashboard-bike-copy h3 { margin:2px 0 0; font-size:1.05rem; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
   .dashboard-mileage { display:grid; min-width:102px; justify-items:end; text-align:right; white-space:nowrap; }
   .dashboard-mileage strong { font-size:clamp(1.05rem,1.12vw,1.22rem); font-variant-numeric:tabular-nums; }
   .dashboard-mileage small { font-size:.75em; }

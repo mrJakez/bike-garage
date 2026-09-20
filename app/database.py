@@ -58,6 +58,7 @@ def initialise_database() -> None:
                 mileage_tracking_started_at_epoch INTEGER,
                 scheduler_enabled INTEGER NOT NULL DEFAULT 1,
                 scheduler_interval_seconds INTEGER,
+                strava_auto_update_enabled INTEGER NOT NULL DEFAULT 0,
                 updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
             );
 
@@ -255,6 +256,8 @@ def initialise_database() -> None:
             db.execute("ALTER TABLE user_settings ADD COLUMN scheduler_enabled INTEGER NOT NULL DEFAULT 1")
         if "scheduler_interval_seconds" not in user_settings_columns:
             db.execute("ALTER TABLE user_settings ADD COLUMN scheduler_interval_seconds INTEGER")
+        if "strava_auto_update_enabled" not in user_settings_columns:
+            db.execute("ALTER TABLE user_settings ADD COLUMN strava_auto_update_enabled INTEGER NOT NULL DEFAULT 0")
         for name, definition in (
             ("identifier", "TEXT NOT NULL DEFAULT ''"),
             ("last_tested_at", "TEXT"),

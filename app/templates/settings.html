@@ -22,16 +22,89 @@
     </div>
   </section>
 
-  <section class="settings-section" aria-labelledby="transfer-title">
-    <div class="settings-section-heading"><h2 id="transfer-title">Provider import &amp; export</h2></div>
-    <div class="settings-panel settings-transfer-panel">
-      <div class="settings-transfer-copy"><strong>Connection archive</strong><p>The export includes access and refresh tokens. Store the downloaded file securely and delete it after importing.</p></div>
-      <div class="settings-transfer-actions">
-        <form method="post" action="/settings/providers/export"><button type="submit" class="secondary">Export connections</button></form>
-        <form method="post" action="/settings/providers/import" enctype="multipart/form-data" class="settings-import-form"><label><span>Import archive</span><input type="file" name="archive" accept="application/json,.json" required></label><button type="submit">Import and activate</button></form>
-      </div>
+  <section class="settings-section" aria-labelledby="strava-update-title">
+    <div class="settings-section-heading"><h2 id="strava-update-title">Strava activity updates</h2></div>
+    <div class="settings-panel">
+      <form method="post" action="/settings/strava-updates" class="settings-form">
+        <label class="settings-toggle"><input type="checkbox" name="enabled" value="1"{% if strava_auto_update_enabled %} checked{% endif %}><span><strong>Automatically update Strava activities</strong><small>When a managed activity has a configured Bike Garage mapping, its Strava bike and activity type are corrected during import.</small></span></label>
+        <div class="settings-form-footer"><p class="settings-status {{ 'is-enabled' if strava_auto_update_enabled else 'is-disabled' }}"><strong>{{ 'Active' if strava_auto_update_enabled else 'Off' }}</strong><span>{% if strava_auto_update_enabled %}Only activities from Garage start onward are changed automatically.{% else %}Strava changes still require confirmation on each activity.{% endif %}</span></p><button type="submit">Save Strava setting</button></div>
+        <p class="settings-note">Bike Garage only changes activities with an assigned bike that is mapped to the same Strava account. Existing descriptions are preserved and receive a short Bike Garage audit note.</p>
+      </form>
     </div>
   </section>
+
+  <section class="settings-section" aria-labelledby="transfer-title">
+    <div class="settings-section-heading"><h2 id="transfer-title">Import &amp; export</h2></div>
+    <div class="settings-panel settings-combined-transfer">
+      <form method="post" action="/settings/export" class="settings-combined-export">
+        <div class="settings-combined-transfer-copy"><strong>Export selected areas</strong><p>Create one Bike Garage JSON archive. Provider credentials are included, so store it securely.</p></div>
+        <div class="settings-export-options">
+          <label><input type="checkbox" name="sections" value="providers" checked><span><strong>Provider connections</strong><small>Accounts, access and refresh tokens</small></span></label>
+          <label><input type="checkbox" name="sections" value="bikes" checked><span><strong>Bikes</strong><small>Configuration, mappings, and photos</small></span></label>
+          <label><input type="checkbox" name="sections" value="rules" checked><span><strong>Rules</strong><small>Order, filters, expressions, and status</small></span></label>
+        </div>
+        <div class="settings-combined-transfer-actions"><button type="submit" class="secondary">Export selected</button></div>
+      </form>
+      <section class="settings-inline-import" aria-labelledby="settings-import-title">
+        <div><strong id="settings-import-title">Import archive</strong><p>Import a combined Bike Garage JSON export. Its included areas are detected automatically.</p></div>
+      <form action="/settings/import" method="post" enctype="multipart/form-data" data-settings-import-form>
+        <label class="provider-import-dropzone" data-settings-import-dropzone tabindex="0">
+          <input type="file" name="archive" accept="application/json,.json" data-settings-import-input>
+          <strong>Place export file here</strong><span>or choose a combined JSON export</span>
+        </label>
+        <p class="provider-import-status" data-settings-import-status aria-live="polite"></p>
+      </form>
+      </section>
+    </div>
+  </section>
+
+  <div class="provider-import-backdrop" data-provider-import-modal hidden>
+    <section class="provider-import-modal" role="dialog" aria-modal="true" aria-labelledby="provider-import-title">
+      <button type="button" class="provider-import-close" data-close-provider-import aria-label="Close import dialog">×</button>
+      <p class="eyebrow">PROVIDER IMPORT</p>
+      <h2 id="provider-import-title">Import provider archive</h2>
+      <p>Drop a Bike Garage provider archive here. A valid archive is imported and activated immediately.</p>
+      <form action="/settings/providers/import" method="post" enctype="multipart/form-data" data-provider-import-form>
+        <label class="provider-import-dropzone" data-provider-import-dropzone tabindex="0">
+          <input type="file" name="archive" accept="application/json,.json" data-provider-import-input>
+          <strong>Drop provider archive here</strong><span>or choose a JSON export</span>
+        </label>
+        <p class="provider-import-status" data-provider-import-status aria-live="polite"></p>
+      </form>
+    </section>
+  </div>
+
+  <div class="provider-import-backdrop" data-bike-import-modal hidden>
+    <section class="provider-import-modal" role="dialog" aria-modal="true" aria-labelledby="bike-import-title">
+      <button type="button" class="provider-import-close" data-close-bike-import aria-label="Close bike import dialog">×</button>
+      <p class="eyebrow">BIKE IMPORT</p>
+      <h2 id="bike-import-title">Import bike archive</h2>
+      <p>Drop a Bike Garage bike archive here. A valid archive is imported immediately, including its photos.</p>
+      <form action="/settings/bikes/import" method="post" enctype="multipart/form-data" data-bike-import-form>
+        <label class="provider-import-dropzone" data-bike-import-dropzone tabindex="0">
+          <input type="file" name="archive" accept="application/json,.json" data-bike-import-input>
+          <strong>Drop bike archive here</strong><span>or choose a JSON export</span>
+        </label>
+        <p class="provider-import-status" data-bike-import-status aria-live="polite"></p>
+      </form>
+    </section>
+  </div>
+
+  <div class="provider-import-backdrop" data-rule-import-modal hidden>
+    <section class="provider-import-modal" role="dialog" aria-modal="true" aria-labelledby="rule-import-title">
+      <button type="button" class="provider-import-close" data-close-rule-import aria-label="Close rule import dialog">×</button>
+      <p class="eyebrow">RULE IMPORT</p>
+      <h2 id="rule-import-title">Import rules</h2>
+      <p>Drop a Bike Garage rule archive here. Rules with the same name are updated; new rules are added.</p>
+      <form action="/settings/rules/import" method="post" enctype="multipart/form-data" data-rule-import-form>
+        <label class="provider-import-dropzone" data-rule-import-dropzone tabindex="0">
+          <input type="file" name="archive" accept="application/json,.json" data-rule-import-input>
+          <strong>Drop rule archive here</strong><span>or choose a JSON export</span>
+        </label>
+        <p class="provider-import-status" data-rule-import-status aria-live="polite"></p>
+      </form>
+    </section>
+  </div>
 
   <section class="settings-section" aria-labelledby="garage-start-title">
     <div class="settings-section-heading"><h2 id="garage-start-title">Garage start</h2></div>
@@ -45,7 +118,6 @@
       {% endif %}
     </div>
   </section>
-
   <section class="settings-section settings-security" aria-labelledby="passkey-title">
     <div class="settings-section-heading"><h2 id="passkey-title">Passkey</h2></div>
     <div class="settings-panel settings-security-panel">
@@ -59,6 +131,79 @@
 </div>
 
 <style>
-  .settings-page{width:min(100%,1120px);display:grid;gap:38px}.settings-page-header{padding-bottom:2px}.settings-page-header h1{margin:5px 0 9px;font-size:2.45rem;letter-spacing:-.035em}.settings-page-header>p:last-child{max-width:670px;margin:0;color:var(--muted)}.settings-section{display:grid;gap:10px}.settings-section-heading h2{margin:0;font-size:1.12rem;letter-spacing:-.01em}.settings-panel{padding:24px 26px;border:1px solid var(--line);border-radius:14px;background:var(--paper);box-shadow:0 1px 2px #1d24230d}.settings-form{display:grid;gap:18px}.settings-control-grid{display:grid;grid-template-columns:minmax(0,1fr) minmax(230px,.38fr);gap:12px}.settings-toggle,.settings-field{display:grid;gap:6px;padding:15px 16px;border:1px solid var(--line);border-radius:10px;background:#fff;font-size:.88rem;font-weight:750}.settings-toggle{grid-template-columns:auto 1fr;align-items:center;gap:12px}.settings-toggle input{width:20px;height:20px;margin:0;accent-color:var(--green)}.settings-toggle span{display:grid;gap:2px}.settings-toggle strong{font-size:.96rem}.settings-toggle small,.settings-panel-intro p,.settings-transfer-copy p{color:var(--muted);font-size:.84rem;font-weight:400}.settings-field>span:first-child{color:var(--muted);font-size:.76rem;letter-spacing:.02em}.settings-input-suffix{display:grid;grid-template-columns:minmax(0,1fr) auto;align-items:stretch;margin-top:3px}.settings-input-suffix input,.settings-date-form input{min-width:0;width:100%;padding:10px 11px;border:1px solid #cfcac0;border-radius:8px;background:#fff;color:var(--ink);font:inherit}.settings-input-suffix input{border-radius:8px 0 0 8px}.settings-input-suffix b{display:grid;place-items:center;padding:0 12px;border:1px solid #cfcac0;border-left:0;border-radius:0 8px 8px 0;background:#f4f2ec;color:var(--muted);font-size:.8rem}.settings-form-footer{display:flex;align-items:center;justify-content:space-between;gap:18px;padding-top:2px}.settings-form-footer button,.settings-transfer-actions button,.settings-security-panel button{min-height:42px;padding:10px 15px;font-size:.88rem}.settings-status{display:flex;align-items:center;gap:8px;margin:0;color:var(--muted);font-size:.84rem}.settings-status strong{padding:3px 8px;border-radius:999px;background:#e8f2ed;color:var(--green);font-size:.74rem}.settings-status.is-disabled strong{background:#fff3df;color:#9a621b}.settings-note{margin:0;color:var(--muted);font-size:.78rem}.settings-form>.settings-note{padding-top:14px;border-top:1px solid var(--line)}.settings-transfer-panel{display:grid;grid-template-columns:minmax(230px,.8fr) minmax(0,1.4fr);align-items:end;gap:26px}.settings-transfer-copy strong,.settings-panel-intro strong{font-size:.98rem}.settings-transfer-copy p,.settings-panel-intro p{margin:4px 0 0}.settings-transfer-actions{display:flex;align-items:end;justify-content:flex-end;flex-wrap:wrap;gap:10px}.settings-transfer-actions form{margin:0}.settings-import-form{display:flex;align-items:end;flex-wrap:wrap;gap:10px}.settings-import-form label{display:grid;gap:5px;color:var(--muted);font-size:.75rem;font-weight:750}.settings-import-form input{max-width:245px;font:inherit;font-size:.78rem}.settings-panel-intro{padding-bottom:18px;border-bottom:1px solid var(--line)}.settings-date-form{grid-template-columns:minmax(220px,340px) minmax(0,1fr);align-items:end}.settings-date-form .settings-field{padding:0;border:0;background:none}.settings-date-form .settings-form-footer{padding:0}.settings-inline-status{display:flex;align-items:baseline;gap:9px;margin-top:18px;padding:12px 14px;border-radius:9px;background:#edf7f1;color:var(--green);font-size:.84rem}.settings-inline-status span{color:var(--muted)}.settings-inline-status.is-paused{background:#fff8ec;color:#9a621b}.settings-security{padding-bottom:8px}.settings-security-panel{display:flex;align-items:end;justify-content:space-between;gap:18px}.settings-security-panel .settings-panel-intro{padding:0;border:0}.settings-security-panel form{margin:0}@media(max-width:760px){.settings-page{gap:30px}.settings-page-header h1{font-size:2.15rem}.settings-panel{padding:20px}.settings-control-grid,.settings-transfer-panel,.settings-date-form{grid-template-columns:1fr}.settings-transfer-actions{align-items:stretch;justify-content:flex-start}.settings-import-form{display:grid;width:100%}.settings-import-form input{max-width:100%;width:100%}.settings-form-footer,.settings-security-panel{align-items:flex-start;flex-direction:column}.settings-form-footer button,.settings-security-panel button{width:100%}.settings-inline-status{align-items:flex-start;flex-direction:column;gap:3px}}
+  .settings-page{width:min(100%,1120px);display:grid;column-gap:38px;row-gap:38px}.settings-page button:not(.provider-import-close),.settings-page .button{background:var(--green);border-color:var(--green);color:#fff}.settings-page button:not(.provider-import-close):hover,.settings-page .button:hover{background:#236347;border-color:#236347;color:#fff}.settings-page-header{padding-bottom:2px}.settings-page-header h1{margin:5px 0 9px;font-size:2.45rem;letter-spacing:-.035em}.settings-page-header>p:last-child{max-width:670px;margin:0;color:var(--muted)}.settings-section{display:grid;gap:10px;margin:0}.settings-section-heading h2{margin:0;font-size:1.12rem;letter-spacing:-.01em}.settings-panel{padding:24px 26px;border:1px solid var(--line);border-radius:14px;background:var(--paper);box-shadow:0 1px 2px #1d24230d}.settings-form{display:grid;gap:18px}.settings-control-grid{display:grid;grid-template-columns:minmax(0,1fr) minmax(230px,.38fr);gap:12px}.settings-toggle,.settings-field{display:grid;gap:6px;padding:15px 16px;border:1px solid var(--line);border-radius:10px;background:#fff;font-size:.88rem;font-weight:750}.settings-toggle{grid-template-columns:auto 1fr;align-items:center;gap:12px}.settings-toggle input{width:20px;height:20px;margin:0;accent-color:var(--green)}.settings-toggle span{display:grid;gap:2px}.settings-toggle strong{font-size:.96rem}.settings-toggle small,.settings-panel-intro p,.settings-transfer-copy p{color:var(--muted);font-size:.84rem;font-weight:400}.settings-field>span:first-child{color:var(--muted);font-size:.76rem;letter-spacing:.02em}.settings-input-suffix{display:grid;grid-template-columns:minmax(0,1fr) auto;align-items:stretch;margin-top:3px}.settings-input-suffix input,.settings-date-form input{min-width:0;width:100%;padding:10px 11px;border:1px solid #cfcac0;border-radius:8px;background:#fff;color:var(--ink);font:inherit}.settings-input-suffix input{border-radius:8px 0 0 8px}.settings-input-suffix b{display:grid;place-items:center;padding:0 12px;border:1px solid #cfcac0;border-left:0;border-radius:0 8px 8px 0;background:#f4f2ec;color:var(--muted);font-size:.8rem}.settings-form-footer{display:flex;align-items:center;justify-content:space-between;gap:18px;padding-top:2px}.settings-form-footer button,.settings-transfer-actions button,.settings-security-panel button{min-height:42px;padding:10px 15px;font-size:.88rem}.settings-status{display:flex;align-items:center;gap:8px;margin:0;color:var(--muted);font-size:.84rem}.settings-status strong{padding:3px 8px;border-radius:999px;background:#e8f2ed;color:var(--green);font-size:.74rem}.settings-status.is-disabled strong{background:#fff3df;color:#9a621b}.settings-note{margin:0;color:var(--muted);font-size:.78rem}.settings-form>.settings-note{padding-top:14px;border-top:1px solid var(--line)}.settings-transfer-panel{display:grid;grid-template-columns:minmax(230px,.8fr) minmax(0,1.4fr);align-items:end;gap:26px}.settings-transfer-copy strong,.settings-panel-intro strong{font-size:.98rem}.settings-transfer-copy p,.settings-panel-intro p{margin:4px 0 0}.settings-transfer-actions{display:flex;align-items:end;justify-content:flex-end;flex-wrap:wrap;gap:10px}.settings-transfer-actions form{margin:0}.settings-panel-intro{padding-bottom:18px;border-bottom:1px solid var(--line)}.settings-date-form{grid-template-columns:minmax(220px,340px) minmax(0,1fr);align-items:end}.settings-date-form .settings-field{padding:0;border:0;background:none}.settings-date-form .settings-form-footer{padding:0}.settings-inline-status{display:flex;align-items:baseline;gap:9px;margin-top:18px;padding:12px 14px;border-radius:9px;background:#edf7f1;color:var(--green);font-size:.84rem}.settings-inline-status span{color:var(--muted)}.settings-inline-status.is-paused{background:#fff8ec;color:#9a621b}.settings-security{padding-bottom:8px}.settings-security-panel{display:flex;align-items:end;justify-content:space-between;gap:18px}.settings-security-panel .settings-panel-intro{padding:0;border:0}.settings-security-panel form{margin:0}.provider-import-backdrop{position:fixed;inset:0;z-index:7000;display:grid;place-items:center;padding:24px;background:#1d242370}.provider-import-backdrop[hidden]{display:none}.provider-import-modal{position:relative;width:min(540px,100%);padding:30px;border:1px solid #c7ddd2;border-radius:16px;background:var(--paper);box-shadow:0 24px 70px #1d24235c}.provider-import-modal h2{margin:6px 0}.provider-import-modal>p{margin:0;color:var(--muted);font-size:.9rem}.provider-import-close{position:absolute;top:10px;right:12px;padding:2px 8px;background:transparent;color:var(--muted);font-size:1.8rem}.provider-import-modal form{margin-top:20px}.provider-import-dropzone{display:grid;place-items:center;gap:5px;min-height:180px;padding:24px;border:2px dashed #8bbda5;border-radius:12px;background:#f4faf6;color:var(--green);text-align:center;cursor:pointer}.provider-import-dropzone:hover,.provider-import-dropzone:focus,.provider-import-dropzone.is-dragging{border-color:var(--green);background:#e8f2ed;outline:0}.provider-import-dropzone strong{font-size:1rem}.provider-import-dropzone span{color:var(--muted);font-size:.82rem}.provider-import-dropzone input{position:absolute;width:1px;height:1px;opacity:0}.provider-import-status{min-height:1.4em;margin:12px 0 0;color:var(--muted);font-size:.84rem}.provider-import-status.is-error{color:#a33b2f}.provider-import-status.is-importing{color:var(--green)}@media(max-width:760px){.settings-page{column-gap:30px;row-gap:30px}.settings-page-header h1{font-size:2.15rem}.settings-panel{padding:20px}.settings-control-grid,.settings-transfer-panel,.settings-date-form{grid-template-columns:1fr}.settings-transfer-actions{align-items:stretch;justify-content:flex-start}.settings-form-footer,.settings-security-panel{align-items:flex-start;flex-direction:column}.settings-form-footer button,.settings-security-panel button{width:100%}.settings-inline-status{align-items:flex-start;flex-direction:column;gap:3px}.provider-import-modal{padding:26px 20px}}
 </style>
+<style>
+  .settings-transfer-operations{display:grid;gap:0;padding-block:4px}.settings-transfer-operation{display:grid;grid-template-columns:minmax(0,1fr) auto;align-items:center;gap:24px;padding:18px 0;border-top:1px solid var(--line)}.settings-transfer-operation:first-child{border-top:0}.settings-transfer-operation strong{font-size:1rem}.settings-transfer-operation p{margin:3px 0 0;color:var(--muted);font-size:.84rem}.settings-transfer-operation .settings-transfer-actions{flex-wrap:nowrap}@media(max-width:760px){.settings-transfer-operation{grid-template-columns:1fr;gap:13px}.settings-transfer-operation .settings-transfer-actions{justify-content:stretch}.settings-transfer-operation .settings-transfer-actions>*{flex:1}.settings-transfer-operation .settings-transfer-actions button{width:100%}}
+</style>
+<style>
+  .settings-combined-export{display:grid;gap:20px}.settings-combined-transfer-copy strong,.settings-inline-import strong{font-size:1rem}.settings-combined-transfer-copy p,.settings-inline-import p{margin:4px 0 0;color:var(--muted);font-size:.84rem}.settings-export-options{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:10px}.settings-export-options label{display:grid;grid-template-columns:auto minmax(0,1fr);align-items:start;gap:10px;padding:14px;border:1px solid var(--line);border-radius:10px;background:#fff;cursor:pointer}.settings-export-options input{width:19px;height:19px;margin:1px 0 0;accent-color:var(--green)}.settings-export-options span{display:grid;gap:3px}.settings-export-options strong{font-size:.88rem}.settings-export-options small{color:var(--muted);font-size:.76rem;line-height:1.35}.settings-combined-transfer-actions{display:flex;justify-content:flex-end;gap:10px}.settings-combined-transfer-actions button{min-height:42px;padding:10px 15px;font-size:.88rem}.settings-inline-import{display:grid;gap:16px;margin-top:24px;padding-top:24px;border-top:1px solid var(--line)}.settings-inline-import form{margin:0}.settings-inline-import .provider-import-dropzone{min-height:132px}@media(max-width:760px){.settings-export-options{grid-template-columns:1fr}.settings-combined-transfer-actions{align-items:stretch;flex-direction:column}.settings-combined-transfer-actions button{width:100%}}
+</style>
+<script>
+  window.addEventListener('DOMContentLoaded',()=>{
+    const form=document.querySelector('[data-settings-import-form]'),input=document.querySelector('[data-settings-import-input]'),zone=document.querySelector('[data-settings-import-dropzone]'),status=document.querySelector('[data-settings-import-status]');
+    if(!form||!input||!zone||!status)return;
+    const setStatus=(message,kind='')=>{status.textContent=message;status.className='provider-import-status'+(kind?' is-'+kind:'')};
+    const importFile=async file=>{try{if(!file)throw Error('Choose a combined Bike Garage export first.');if(file.size>35_000_000)throw Error('The archive is too large.');let archive;try{archive=JSON.parse(await file.text())}catch(_){throw Error('This is not a valid JSON archive.')}if(!archive||archive.format!=='bike-garage-settings-archive'||archive.version!==1||!archive.sections||typeof archive.sections!=='object')throw Error('Choose a combined Bike Garage export.');setStatus(`Importing ${file.name}…`,'importing');const data=new FormData();data.append('archive',file,file.name);const response=await fetch(form.action,{method:'POST',credentials:'same-origin',body:data});if(response.redirected){window.location.assign(response.url);return}throw Error('The archive could not be imported.')}catch(error){setStatus(error.message||'The archive could not be imported.','error')}};
+    input.addEventListener('change',()=>importFile(input.files?.[0]));zone.addEventListener('keydown',event=>{if(event.key==='Enter'||event.key===' '){event.preventDefault();input.click()}});['dragenter','dragover'].forEach(type=>zone.addEventListener(type,event=>{event.preventDefault();zone.classList.add('is-dragging')}));['dragleave','drop'].forEach(type=>zone.addEventListener(type,event=>{event.preventDefault();zone.classList.remove('is-dragging')}));zone.addEventListener('drop',event=>importFile(event.dataTransfer?.files?.[0]));
+  });
+</script>
+<script>
+  window.addEventListener('DOMContentLoaded',()=>{
+    const modal=document.querySelector('[data-provider-import-modal]');
+    const open=document.querySelector('[data-open-provider-import]');
+    const close=document.querySelector('[data-close-provider-import]');
+    const form=document.querySelector('[data-provider-import-form]');
+    const input=document.querySelector('[data-provider-import-input]');
+    const zone=document.querySelector('[data-provider-import-dropzone]');
+    const status=document.querySelector('[data-provider-import-status]');
+    if(!modal||!open||!close||!form||!input||!zone||!status)return;
+    const setStatus=(message,kind='')=>{status.textContent=message;status.className='provider-import-status'+(kind?' is-'+kind:'')};
+    const hide=()=>{modal.hidden=true;zone.classList.remove('is-dragging');setStatus('');input.value=''};
+    const validate=async file=>{
+      if(!file)throw Error('Choose a provider archive first.');
+      if(file.size>1_000_000)throw Error('The archive is too large.');
+      let archive;
+      try{archive=JSON.parse(await file.text())}catch(_){throw Error('This is not a valid JSON archive.')}
+      if(!archive||archive.format!=='bike-garage-provider-connections'||archive.version!==1||!Array.isArray(archive.connections)||!archive.connections.length)throw Error('Choose a Bike Garage provider archive.')
+    };
+    const importFile=async file=>{
+      try{
+        await validate(file);
+        setStatus(`Importing ${file.name}…`,'importing');
+        const data=new FormData();data.append('archive',file,file.name);
+        const response=await fetch(form.action,{method:'POST',credentials:'same-origin',body:data});
+        if(response.redirected){window.location.assign(response.url);return}
+        throw Error('The archive could not be imported.');
+      }catch(error){setStatus(error.message||'The archive could not be imported.','error')}
+    };
+    open.addEventListener('click',()=>{modal.hidden=false;setStatus('Drop a Bike Garage provider archive to import it.');zone.focus()});
+    close.addEventListener('click',hide);modal.addEventListener('click',event=>{if(event.target===modal)hide()});
+    document.addEventListener('keydown',event=>{if(event.key==='Escape'&&!modal.hidden)hide()});
+    input.addEventListener('change',()=>importFile(input.files?.[0]));
+    zone.addEventListener('keydown',event=>{if(event.key==='Enter'||event.key===' '){event.preventDefault();input.click()}});
+    ['dragenter','dragover'].forEach(type=>zone.addEventListener(type,event=>{event.preventDefault();zone.classList.add('is-dragging')}));
+    ['dragleave','drop'].forEach(type=>zone.addEventListener(type,event=>{event.preventDefault();zone.classList.remove('is-dragging')}));
+    zone.addEventListener('drop',event=>importFile(event.dataTransfer?.files?.[0]));
+  });
+</script>
+<script>
+  window.addEventListener('DOMContentLoaded',()=>{
+    const modal=document.querySelector('[data-bike-import-modal]'),open=document.querySelector('[data-open-bike-import]'),close=document.querySelector('[data-close-bike-import]'),form=document.querySelector('[data-bike-import-form]'),input=document.querySelector('[data-bike-import-input]'),zone=document.querySelector('[data-bike-import-dropzone]'),status=document.querySelector('[data-bike-import-status]');
+    if(!modal||!open||!close||!form||!input||!zone||!status)return;
+    const setStatus=(message,kind='')=>{status.textContent=message;status.className='provider-import-status'+(kind?' is-'+kind:'')};
+    const hide=()=>{modal.hidden=true;zone.classList.remove('is-dragging');setStatus('');input.value=''};
+    const importFile=async file=>{try{if(!file)throw Error('Choose a bike archive first.');if(file.size>35_000_000)throw Error('The archive is too large.');let archive;try{archive=JSON.parse(await file.text())}catch(_){throw Error('This is not a valid JSON archive.')}if(!archive||archive.format!=='bike-garage-bikes'||archive.version!==1||!Array.isArray(archive.bikes)||!archive.bikes.length)throw Error('Choose a Bike Garage bike archive.');setStatus(`Importing ${file.name}…`,'importing');const data=new FormData();data.append('archive',file,file.name);const response=await fetch(form.action,{method:'POST',credentials:'same-origin',body:data});if(response.redirected){window.location.assign(response.url);return}throw Error('The archive could not be imported.')}catch(error){setStatus(error.message||'The archive could not be imported.','error')}};
+    open.addEventListener('click',()=>{modal.hidden=false;setStatus('Drop a Bike Garage archive to import it.');zone.focus()});close.addEventListener('click',hide);modal.addEventListener('click',event=>{if(event.target===modal)hide()});document.addEventListener('keydown',event=>{if(event.key==='Escape'&&!modal.hidden)hide()});input.addEventListener('change',()=>importFile(input.files?.[0]));zone.addEventListener('keydown',event=>{if(event.key==='Enter'||event.key===' '){event.preventDefault();input.click()}});['dragenter','dragover'].forEach(type=>zone.addEventListener(type,event=>{event.preventDefault();zone.classList.add('is-dragging')}));['dragleave','drop'].forEach(type=>zone.addEventListener(type,event=>{event.preventDefault();zone.classList.remove('is-dragging')}));zone.addEventListener('drop',event=>importFile(event.dataTransfer?.files?.[0]));
+  });
+</script>
+<script>
+  window.addEventListener('DOMContentLoaded',()=>{
+    const modal=document.querySelector('[data-rule-import-modal]'),open=document.querySelector('[data-open-rule-import]'),close=document.querySelector('[data-close-rule-import]'),form=document.querySelector('[data-rule-import-form]'),input=document.querySelector('[data-rule-import-input]'),zone=document.querySelector('[data-rule-import-dropzone]'),status=document.querySelector('[data-rule-import-status]');
+    if(!modal||!open||!close||!form||!input||!zone||!status)return;
+    const setStatus=(message,kind='')=>{status.textContent=message;status.className='provider-import-status'+(kind?' is-'+kind:'')};const hide=()=>{modal.hidden=true;zone.classList.remove('is-dragging');setStatus('');input.value=''};
+    const importFile=async file=>{try{if(!file)throw Error('Choose a rule archive first.');if(file.size>2_000_000)throw Error('The archive is too large.');let archive;try{archive=JSON.parse(await file.text())}catch(_){throw Error('This is not a valid JSON archive.')}if(!archive||archive.format!=='bike-garage-rules'||archive.version!==1||!Array.isArray(archive.rules)||!archive.rules.length)throw Error('Choose a Bike Garage rule archive.');setStatus(`Importing ${file.name}…`,'importing');const data=new FormData();data.append('archive',file,file.name);const response=await fetch(form.action,{method:'POST',credentials:'same-origin',body:data});if(response.redirected){window.location.assign(response.url);return}throw Error('The archive could not be imported.')}catch(error){setStatus(error.message||'The archive could not be imported.','error')}};
+    open.addEventListener('click',()=>{modal.hidden=false;setStatus('Drop a Bike Garage rule archive to import it.');zone.focus()});close.addEventListener('click',hide);modal.addEventListener('click',event=>{if(event.target===modal)hide()});document.addEventListener('keydown',event=>{if(event.key==='Escape'&&!modal.hidden)hide()});input.addEventListener('change',()=>importFile(input.files?.[0]));zone.addEventListener('keydown',event=>{if(event.key==='Enter'||event.key===' '){event.preventDefault();input.click()}});['dragenter','dragover'].forEach(type=>zone.addEventListener(type,event=>{event.preventDefault();zone.classList.add('is-dragging')}));['dragleave','drop'].forEach(type=>zone.addEventListener(type,event=>{event.preventDefault();zone.classList.remove('is-dragging')}));zone.addEventListener('drop',event=>importFile(event.dataTransfer?.files?.[0]));
+  });
+</script>
 {% endblock %}

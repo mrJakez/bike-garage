@@ -1,7 +1,10 @@
 from __future__ import annotations
 
 import json
+import base64
+import binascii
 from concurrent.futures import ThreadPoolExecutor, as_completed
+from io import BytesIO
 import os
 from queue import Queue
 import secrets
@@ -1090,6 +1093,304 @@ async def import_provider_connections(archive: UploadFile = File(...)):
     )
 
 
+BIKE_ARCHIVE_IMAGE_TYPES = {"image/jpeg": ".jpg", "image/png": ".png", "image/webp": ".webp"}
+
+
+def bike_archive_photo(filename: str) -> dict[str, str] | None:
+    """Embed a stored bike image in a portable JSON archive."""
+    candidate = (PHOTO_ROOT / filename).resolve()
+    if candidate.parent != PHOTO_ROOT.resolve() or not candidate.is_file():
+        return None
+    mime_type = next((mime for mime, suffix in BIKE_ARCHIVE_IMAGE_TYPES.items() if candidate.suffix.lower() == suffix), None)
+    if mime_type is None:
+        return None
+    content = candidate.read_bytes()
+    if len(content) > 5 * 1024 * 1024:
+        return None
+    return {"mime_type": mime_type, "data_base64": base64.b64encode(content).decode("ascii")}
+
+
+@app.post("/settings/bikes/export")
+def export_bikes():
+    """Download bike setup data and photos as one self-contained JSON archive."""
+    user = initial_user()
+    with connection() as db:
+        bikes = db.execute("SELECT * FROM bikes WHERE user_id=? ORDER BY id", (user["id"],)).fetchall()
+        if not bikes:
+            return RedirectResponse("/settings?notice=No+bikes+to+export", status_code=303)
+        records = []
+        for bike in bikes:
+            components = {
+                row["component_type"]: row["ant_device_number"]
+                for row in db.execute("SELECT component_type,ant_device_number FROM bike_components WHERE bike_id=?", (bike["id"],)).fetchall()
+            }
+            strava_gears = [dict(row) for row in db.execute(
+                """SELECT pc.identifier AS connection_identifier, sg.external_gear_id
+                   FROM bike_strava_gear_mappings mapping
+                   JOIN strava_gears sg ON sg.id=mapping.strava_gear_id
+                   JOIN provider_connections pc ON pc.id=sg.provider_connection_id
+                   WHERE mapping.bike_id=? ORDER BY pc.identifier, sg.external_gear_id""",
+                (bike["id"],),
+            ).fetchall()]
+            records.append({
+                "name": bike["name"], "identifier": bike["identifier"], "bike_type": bike["bike_type"],
+                "frame_number": bike["frame_number"], "details_markdown": bike["details_markdown"],
+                "starting_mileage_m": bike["starting_mileage_m"], "strava_activity_type": bike["strava_activity_type"],
+                "components": components, "strava_gears": strava_gears, "photo": bike_archive_photo(bike["photo_filename"]),
+            })
+    export_document = {"format": "bike-garage-bikes", "version": 1, "exported_at": datetime.now(UTC).isoformat(), "bikes": records}
+    filename = f"bike-garage-bikes-{datetime.now(UTC).strftime('%Y%m%d-%H%M%S')}.json"
+    return Response(json.dumps(export_document, indent=2) + "\n", media_type="application/json", headers={"Content-Disposition": f'attachment; filename="{filename}"', "Cache-Control": "no-store"})
+
+
+def parse_bike_archive(document: object) -> list[dict[str, object]]:
+    if not isinstance(document, dict) or document.get("format") != "bike-garage-bikes" or document.get("version") != 1:
+        raise ValueError("This is not a Bike Garage bike export.")
+    records = document.get("bikes")
+    if not isinstance(records, list) or not records or len(records) > 100:
+        raise ValueError("The export must contain between 1 and 100 bikes.")
+    parsed: list[dict[str, object]] = []
+    seen_identifiers: set[str] = set()
+    component_pairs: set[tuple[str, int]] = set()
+    valid_component_types = {item[0] for item in BIKE_COMPONENT_TYPES}
+    for record in records:
+        if not isinstance(record, dict):
+            raise ValueError("Each bike must be an object.")
+        name, identifier, bike_type = record.get("name"), record.get("identifier"), record.get("bike_type")
+        if not isinstance(name, str) or not name.strip() or not isinstance(identifier, str) or not identifier.strip() or bike_type not in BIKE_TYPES:
+            raise ValueError("Every bike needs a name, identifier, and valid type.")
+        identifier = identifier.strip()
+        if identifier in seen_identifiers:
+            raise ValueError("The export contains the same bike identifier more than once.")
+        seen_identifiers.add(identifier)
+        frame, details = bike_configuration_fields(record.get("frame_number"), record.get("details_markdown"))
+        try:
+            mileage = max(0, float(record.get("starting_mileage_m") or 0))
+        except (TypeError, ValueError) as error:
+            raise ValueError("A bike has an invalid starting mileage.") from error
+        activity_type = record.get("strava_activity_type")
+        if activity_type is not None and activity_type not in BIKE_STRAVA_ACTIVITY_TYPE_VALUES:
+            raise ValueError("A bike has an invalid Strava activity type.")
+        raw_components = record.get("components") or {}
+        if not isinstance(raw_components, dict):
+            raise ValueError("A bike has invalid components.")
+        components: dict[str, int] = {}
+        for component_type, value in raw_components.items():
+            if component_type not in valid_component_types or not isinstance(value, int) or not 1 <= value <= 65535:
+                raise ValueError("A bike has an invalid component ANT+ ID.")
+            pair = (component_type, value)
+            if pair in component_pairs:
+                raise ValueError("The export assigns one component ANT+ ID to more than one bike.")
+            component_pairs.add(pair); components[component_type] = value
+        photo = record.get("photo")
+        photo_bytes: bytes | None = None; photo_suffix: str | None = None
+        if photo is not None:
+            if not isinstance(photo, dict) or photo.get("mime_type") not in BIKE_ARCHIVE_IMAGE_TYPES or not isinstance(photo.get("data_base64"), str):
+                raise ValueError("A bike has an invalid photo.")
+            try:
+                photo_bytes = base64.b64decode(photo["data_base64"], validate=True)
+            except (binascii.Error, ValueError) as error:
+                raise ValueError("A bike photo is not valid Base64.") from error
+            if not photo_bytes or len(photo_bytes) > 5 * 1024 * 1024:
+                raise ValueError("A bike photo must be between 1 byte and 5 MB.")
+            photo_suffix = BIKE_ARCHIVE_IMAGE_TYPES[photo["mime_type"]]
+        gears = record.get("strava_gears") or []
+        if not isinstance(gears, list) or any(not isinstance(item, dict) or not isinstance(item.get("connection_identifier"), str) or not isinstance(item.get("external_gear_id"), str) for item in gears):
+            raise ValueError("A bike has invalid Strava bike mappings.")
+        parsed.append({"name": name.strip(), "identifier": identifier, "bike_type": bike_type, "frame_number": frame, "details_markdown": details, "starting_mileage_m": mileage, "strava_activity_type": activity_type, "components": components, "photo_bytes": photo_bytes, "photo_suffix": photo_suffix, "strava_gears": gears})
+    return parsed
+
+
+@app.post("/settings/bikes/import")
+async def import_bikes(archive: UploadFile = File(...)):
+    try:
+        raw_document = await archive.read()
+        if len(raw_document) > 35_000_000:
+            raise ValueError("The file is too large.")
+        records = parse_bike_archive(json.loads(raw_document.decode("utf-8")))
+    except (UnicodeDecodeError, json.JSONDecodeError, ValueError) as error:
+        return RedirectResponse("/settings?" + urlencode({"notice": f"Bike import failed: {error}"}), status_code=303)
+    user = initial_user(); created = 0; updated = 0
+    with connection() as db:
+        for record in records:
+            existing = db.execute("SELECT id,photo_filename FROM bikes WHERE user_id=? AND identifier=?", (user["id"], record["identifier"])).fetchone()
+            bike_id = existing["id"] if existing else None
+            ensure_component_ids_available(db, record["components"], exclude_bike_id=bike_id)
+            photo_filename = existing["photo_filename"] if existing else placeholder_photo_filename()
+            if record["photo_bytes"] is not None:
+                photo_filename = f"{secrets.token_hex(16)}{record['photo_suffix']}"
+                (PHOTO_ROOT / photo_filename).write_bytes(record["photo_bytes"])
+            values = (record["name"], record["bike_type"], record["frame_number"], record["details_markdown"], photo_filename, record["starting_mileage_m"], record["strava_activity_type"])
+            if existing:
+                db.execute("UPDATE bikes SET name=?,bike_type=?,frame_number=?,details_markdown=?,photo_filename=?,starting_mileage_m=?,strava_activity_type=?,updated_at=CURRENT_TIMESTAMP WHERE id=?", (*values, bike_id)); updated += 1
+            else:
+                bike_id = db.execute("INSERT INTO bikes (user_id,name,identifier,bike_type,owner_name,frame_number,details_markdown,photo_filename,starting_mileage_m,strava_activity_type) VALUES (?,?,?,?,?,?,?,?,?,?)", (user["id"], record["name"], record["identifier"], record["bike_type"], user["display_name"], record["frame_number"], record["details_markdown"], photo_filename, record["starting_mileage_m"], record["strava_activity_type"])).lastrowid; created += 1
+            save_bike_components(db, bike_id, record["components"])
+            db.execute("DELETE FROM bike_strava_gear_mappings WHERE bike_id=?", (bike_id,))
+            for gear in record["strava_gears"]:
+                match = db.execute("SELECT sg.id FROM strava_gears sg JOIN provider_connections pc ON pc.id=sg.provider_connection_id WHERE pc.identifier=? AND sg.external_gear_id=?", (gear["connection_identifier"], gear["external_gear_id"])).fetchone()
+                if match:
+                    db.execute("INSERT OR IGNORE INTO bike_strava_gear_mappings (bike_id,strava_gear_id) VALUES (?,?)", (bike_id, match["id"]))
+    return RedirectResponse("/settings?" + urlencode({"notice": f"Imported {created} bike(s); updated {updated}."}), status_code=303)
+
+
+RULE_ARCHIVE_FIELDS = (
+    "name", "priority", "sport_type", "provider_account_id", "bike_count", "expression",
+    "condition_operator", "condition_value", "is_catch_all", "enabled",
+)
+
+
+@app.post("/settings/rules/export")
+def export_rules():
+    user = initial_user()
+    with connection() as db:
+        rules = db.execute(
+            "SELECT name,priority,sport_type,provider_account_id,bike_count,expression,condition_operator,condition_value,is_catch_all,enabled FROM resolver_rules WHERE user_id=? ORDER BY priority,id",
+            (user["id"],),
+        ).fetchall()
+    if not rules:
+        return RedirectResponse("/settings?notice=No+rules+to+export", status_code=303)
+    document = {"format": "bike-garage-rules", "version": 1, "exported_at": datetime.now(UTC).isoformat(), "rules": [dict(rule) for rule in rules]}
+    filename = f"bike-garage-rules-{datetime.now(UTC).strftime('%Y%m%d-%H%M%S')}.json"
+    return Response(json.dumps(document, indent=2) + "\n", media_type="application/json", headers={"Content-Disposition": f'attachment; filename="{filename}"', "Cache-Control": "no-store"})
+
+
+def parse_rule_archive(document: object) -> list[dict[str, object]]:
+    if not isinstance(document, dict) or document.get("format") != "bike-garage-rules" or document.get("version") != 1:
+        raise ValueError("This is not a Bike Garage rule export.")
+    records = document.get("rules")
+    if not isinstance(records, list) or not records or len(records) > 200:
+        raise ValueError("The export must contain between 1 and 200 rules.")
+    parsed: list[dict[str, object]] = []
+    for record in records:
+        if not isinstance(record, dict):
+            raise ValueError("Each rule must be an object.")
+        name, expression = record.get("name"), record.get("expression")
+        if not isinstance(name, str) or not name.strip() or not isinstance(expression, str) or not validate_expression(expression):
+            raise ValueError("Every rule needs a name and a valid expression.")
+        try:
+            priority, bike_count, condition_value = int(record.get("priority", 100)), int(record.get("bike_count", 1)), int(record.get("condition_value", 1))
+        except (TypeError, ValueError) as error:
+            raise ValueError("A rule has invalid numeric values.") from error
+        operator = record.get("condition_operator", ">=")
+        if not 1 <= bike_count <= 6 or operator not in {">", ">=", "=", "<", "<="}:
+            raise ValueError("A rule has invalid settings.")
+        sport_type, account = record.get("sport_type"), record.get("provider_account_id")
+        if sport_type is not None and not isinstance(sport_type, str) or account is not None and not isinstance(account, str):
+            raise ValueError("A rule has an invalid filter.")
+        parsed.append({"name": name.strip(), "priority": priority, "sport_type": sport_type, "provider_account_id": account, "bike_count": bike_count, "expression": expression, "condition_operator": operator, "condition_value": condition_value, "is_catch_all": int(bool(record.get("is_catch_all"))), "enabled": int(bool(record.get("enabled", True)))})
+    return parsed
+
+
+@app.post("/settings/rules/import")
+async def import_rules(archive: UploadFile = File(...)):
+    try:
+        raw_document = await archive.read()
+        if len(raw_document) > 2_000_000:
+            raise ValueError("The file is too large.")
+        records = parse_rule_archive(json.loads(raw_document.decode("utf-8")))
+    except (UnicodeDecodeError, json.JSONDecodeError, ValueError) as error:
+        return RedirectResponse("/settings?" + urlencode({"notice": f"Rule import failed: {error}"}), status_code=303)
+    user = initial_user(); created = 0; updated = 0
+    with connection() as db:
+        for record in records:
+            existing = db.execute("SELECT id FROM resolver_rules WHERE user_id=? AND name=? ORDER BY id LIMIT 1", (user["id"], record["name"])).fetchone()
+            values = tuple(record[field] for field in RULE_ARCHIVE_FIELDS if field != "name")
+            if existing:
+                db.execute("UPDATE resolver_rules SET priority=?,sport_type=?,provider_account_id=?,bike_count=?,expression=?,condition_operator=?,condition_value=?,is_catch_all=?,enabled=?,updated_at=CURRENT_TIMESTAMP WHERE id=?", (*values, existing["id"])); updated += 1
+            else:
+                db.execute("INSERT INTO resolver_rules (user_id,name,priority,sport_type,provider_account_id,bike_count,expression,condition_operator,condition_value,is_catch_all,enabled) VALUES (?,?,?,?,?,?,?,?,?,?,?)", (user["id"], *(record[field] for field in RULE_ARCHIVE_FIELDS))); created += 1
+    return RedirectResponse("/settings?" + urlencode({"notice": f"Imported {created} rule(s); updated {updated}."}), status_code=303)
+
+
+@app.post("/settings/export")
+def export_settings_archive(sections: list[str] = Form(...)):
+    """Create one portable archive containing the selected Garage entities."""
+    allowed = {
+        "providers": (export_provider_connections, "connections"),
+        "bikes": (export_bikes, "bikes"),
+        "rules": (export_rules, "rules"),
+    }
+    selected = list(dict.fromkeys(sections))
+    if not selected or any(section not in allowed for section in selected):
+        return RedirectResponse("/settings?notice=Choose+at+least+one+valid+export+area", status_code=303)
+    payload: dict[str, object] = {}
+    for section in selected:
+        response = allowed[section][0]()
+        # An empty area deliberately stays out of the combined archive; this
+        # makes an all-selected export usable even for a new Garage.
+        if isinstance(response, RedirectResponse):
+            continue
+        try:
+            document = json.loads(response.body)
+            payload[section] = document[allowed[section][1]]
+        except (AttributeError, KeyError, TypeError, json.JSONDecodeError):
+            return RedirectResponse("/settings?notice=Export+could+not+be+created", status_code=303)
+    document = {
+        "format": "bike-garage-settings-archive",
+        "version": 1,
+        "exported_at": datetime.now(UTC).isoformat(),
+        "sections": payload,
+    }
+    filename = f"bike-garage-export-{datetime.now(UTC).strftime('%Y%m%d-%H%M%S')}.json"
+    return Response(
+        json.dumps(document, indent=2) + "\n",
+        media_type="application/json",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"', "Cache-Control": "no-store"},
+    )
+
+
+def import_error_from_response(response: RedirectResponse) -> str | None:
+    """Convert a reused single-area import redirect into a combined error."""
+    location = response.headers.get("location", "")
+    values = parse_qs(location.partition("?")[2]).get("notice", [])
+    notice = values[0] if values else ""
+    return notice if "failed" in notice.lower() else None
+
+
+@app.post("/settings/import")
+async def import_settings_archive(archive: UploadFile = File(...)):
+    """Import a combined Settings archive through the established validators."""
+    try:
+        raw_document = await archive.read()
+        if len(raw_document) > 35_000_000:
+            raise ValueError("The file is too large.")
+        document = json.loads(raw_document.decode("utf-8"))
+        sections = document.get("sections") if isinstance(document, dict) else None
+        if not isinstance(document, dict) or document.get("format") != "bike-garage-settings-archive" or document.get("version") != 1:
+            raise ValueError("This is not a Bike Garage combined export.")
+        if not isinstance(sections, dict) or not sections:
+            raise ValueError("The export does not contain any selected areas.")
+        unknown = set(sections) - {"providers", "bikes", "rules"}
+        if unknown:
+            raise ValueError("The export contains an unsupported area.")
+        if any(not isinstance(records, list) for records in sections.values()):
+            raise ValueError("An export area is invalid.")
+    except (UnicodeDecodeError, json.JSONDecodeError, ValueError) as error:
+        return RedirectResponse("/settings?" + urlencode({"notice": f"Import failed: {error}"}), status_code=303)
+
+    handlers = {
+        "providers": ("bike-garage-provider-connections", "connections", import_provider_connections),
+        "bikes": ("bike-garage-bikes", "bikes", import_bikes),
+        "rules": ("bike-garage-rules", "rules", import_rules),
+    }
+    imported_areas: list[str] = []
+    for area, records in sections.items():
+        if not records:
+            continue
+        archive_format, record_key, handler = handlers[area]
+        nested_document = {"format": archive_format, "version": 1, record_key: records}
+        nested_upload = UploadFile(filename=f"{area}.json", file=BytesIO(json.dumps(nested_document).encode("utf-8")))
+        result = await handler(nested_upload)
+        error = import_error_from_response(result)
+        if error:
+            return RedirectResponse("/settings?" + urlencode({"notice": error}), status_code=303)
+        imported_areas.append(area)
+    if not imported_areas:
+        return RedirectResponse("/settings?notice=The+selected+export+areas+were+empty", status_code=303)
+    return RedirectResponse("/settings?" + urlencode({"notice": f"Imported {', '.join(imported_areas)}."}), status_code=303)
+
+
 @app.post("/connections/{connection_id}/activate")
 def activate_provider_connection(connection_id: int):
     user = initial_user()
@@ -1156,6 +1457,10 @@ def settings_page(request: Request):
         passkey = db.execute(
             "SELECT created_at,last_used_at FROM passkeys WHERE user_id=?", (initial_user()["id"],)
         ).fetchone()
+        strava_auto_update = db.execute(
+            "SELECT strava_auto_update_enabled FROM user_settings WHERE user_id=?", (initial_user()["id"],)
+        ).fetchone()
+        strava_auto_update_enabled = bool(strava_auto_update["strava_auto_update_enabled"]) if strava_auto_update else False
     scheduler_enabled, scheduler_interval_seconds = scheduler_configuration()
     return templates.TemplateResponse(
         request,
@@ -1165,6 +1470,7 @@ def settings_page(request: Request):
             passkey=dict(passkey) if passkey else None,
             scheduler_enabled=scheduler_enabled,
             scheduler_interval_minutes=scheduler_interval_seconds // 60,
+            strava_auto_update_enabled=strava_auto_update_enabled,
         ),
     )
 
@@ -1195,6 +1501,25 @@ async def update_scheduler_settings(request: Request):
     return RedirectResponse(
         "/settings?" + urlencode({"notice": f"Scheduler {state}; interval set to {interval_minutes} minutes"}),
         status_code=303,
+    )
+
+
+@app.post("/settings/strava-updates")
+async def update_strava_auto_update_settings(request: Request):
+    form = parse_qs((await request.body()).decode("utf-8"), keep_blank_values=True)
+    enabled = 1 if form.get("enabled", [""])[0] == "1" else 0
+    user = initial_user()
+    with connection() as db:
+        db.execute(
+            """INSERT INTO user_settings (user_id,strava_auto_update_enabled,updated_at)
+               VALUES (?,?,CURRENT_TIMESTAMP)
+               ON CONFLICT(user_id) DO UPDATE SET strava_auto_update_enabled=excluded.strava_auto_update_enabled,
+                 updated_at=CURRENT_TIMESTAMP""",
+            (user["id"], enabled),
+        )
+    state = "enabled" if enabled else "disabled"
+    return RedirectResponse(
+        "/settings?" + urlencode({"notice": f"Automatic Strava activity updates {state}"}), status_code=303,
     )
 
 
@@ -2445,15 +2770,33 @@ def sync_now():
 
 
 @app.get("/sync/progress")
-def sync_progress():
+def sync_progress(request: Request):
     """Stream manual-sync milestones so the Activities page stays responsive."""
     updates: Queue[tuple[str, object]] = Queue()
+    structured = request.query_params.get("format") == "structured"
+
+    def publish_progress(message: object) -> None:
+        """Keep already-open pages on the legacy, readable text protocol."""
+        if structured:
+            updates.put(("progress", message))
+            return
+        if not isinstance(message, dict):
+            updates.put(("progress", message))
+            return
+        if message.get("type") == "providers":
+            return
+        if message.get("type") == "provider":
+            label = message.get("label", "Provider")
+            updates.put(("progress", f"{label}: {message.get('status', 'Working…')}"))
+            return
+        if message.get("type") == "overall":
+            updates.put(("progress", message.get("status", "Working on your activity data…")))
 
     def worker() -> None:
         errors: list[str] = []
         try:
-            updates.put(("progress", "Preparing provider synchronization…"))
-            imported = sync_all_connections(errors, progress=lambda message: updates.put(("progress", message)))
+            publish_progress({"type": "overall", "status": "Preparing provider synchronization…"})
+            imported = sync_all_connections(errors, progress=publish_progress)
             if errors:
                 notice = f"Sync finished with provider errors. Imported {imported} new provider activities."
             else:

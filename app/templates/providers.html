@@ -23,7 +23,7 @@
 </div>
 {% endif %}
 <p class="eyebrow">SETTINGS</p>
-<div class="page-heading"><div><h1>Provider connections</h1><p class="lead">Connect a source account for every rider whose activities should appear in Bike Garage.</p></div>{% if connections %}<div class="provider-bulk-actions"><form method="post" action="/providers/activate-all"><button type="submit" class="secondary">Activate all</button></form><form method="post" action="/providers/deactivate-all" onsubmit="return confirm('Deactivate every provider connection? Scheduled imports will stop until you activate them again.')"><button type="submit" class="bulk-deactivate">Deactivate all</button></form></div>{% endif %}</div>
+<div class="page-heading"><div><h1>Provider connections</h1><p class="lead">Connect a source account for every rider whose activities should appear in Bike Garage.</p></div>{% if connections %}<div class="provider-bulk-actions"><form method="post" action="/providers/deactivate-all" onsubmit="return confirm('Deactivate every provider connection? Scheduled imports will stop until you activate them again.')"><button type="submit" class="header-action header-action-secondary">Deactivate all</button></form><form method="post" action="/providers/activate-all"><button type="submit" class="header-action header-action-primary">Activate all</button></form></div>{% endif %}</div>
 <div class="provider-grid">
   {% for key, provider in providers.items() %}
   <section class="card provider-card">
