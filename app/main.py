@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import base64
 import binascii
+from html import escape
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from io import BytesIO
 import os
@@ -21,6 +22,7 @@ from fastapi.responses import FileResponse, JSONResponse, RedirectResponse, Resp
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from starlette.middleware.sessions import SessionMiddleware
+from markupsafe import Markup
 
 from .connectors.strava_proxy import fetch_activity as fetch_strava_activity, fetch_bikes as fetch_strava_bikes, health_check, normalise_base_url, test_connection, update_activity as update_strava_activity
 from .connectors.hammerhead import DEFAULT_API_BASE_URL, authorization_url as hammerhead_authorization_url, exchange_code as exchange_hammerhead_code, fetch_activity_detail as fetch_hammerhead_activity_detail, fetch_activity_fit as fetch_hammerhead_activity_fit, normalise_base_url as normalise_hammerhead_base_url, test_connection as test_hammerhead_connection
@@ -62,6 +64,70 @@ def ghcr_build_metadata() -> dict[str, str] | None:
 def public_origin(request: Request) -> str:
     """Use the explicit external HTTPS origin when the app is behind a proxy."""
     return os.getenv("BIKE_GARAGE_PUBLIC_ORIGIN", "").strip().rstrip("/") or str(request.base_url).rstrip("/")
+
+
+def render_bike_details_markdown(value: object) -> Markup:
+    """Render stored bike notes as safe, presentational Markdown."""
+    source = str(value or "").strip()
+    if not source:
+        return Markup("")
+    def inline(text: str) -> str:
+        escaped = escape(text)
+        escaped = re.sub(r"`([^`]+)`", r"<code>\1</code>", escaped)
+        escaped = re.sub(r"\*\*(.+?)\*\*", r"<strong>\1</strong>", escaped)
+        escaped = re.sub(r"(?<!\*)\*([^*\n]+)\*", r"<em>\1</em>", escaped)
+        return re.sub(
+            r"\[([^\]]+)\]\((https?://[^\s)]+)\)",
+            r'<a href="\2" target="_blank" rel="noopener noreferrer">\1</a>',
+            escaped,
+        )
+
+    output: list[str] = []
+    list_kind: str | None = None
+    code_lines: list[str] | None = None
+
+    def close_list() -> None:
+        nonlocal list_kind
+        if list_kind:
+            output.append(f"</{list_kind}>")
+            list_kind = None
+
+    for raw_line in source.splitlines():
+        line = raw_line.rstrip()
+        if line.strip().startswith("```"):
+            close_list()
+            if code_lines is None:
+                code_lines = []
+            else:
+                output.append(f"<pre><code>{escape(chr(10).join(code_lines))}</code></pre>")
+                code_lines = None
+            continue
+        if code_lines is not None:
+            code_lines.append(raw_line)
+            continue
+        heading = re.match(r"^(#{1,4})\s+(.+)$", line)
+        bullet = re.match(r"^\s*[-*+]\s+(.+)$", line)
+        ordered = re.match(r"^\s*\d+[.)]\s+(.+)$", line)
+        if heading:
+            close_list()
+            level = len(heading.group(1))
+            output.append(f"<h{level}>{inline(heading.group(2))}</h{level}>")
+        elif bullet or ordered:
+            kind = "ul" if bullet else "ol"
+            if list_kind != kind:
+                close_list()
+                output.append(f"<{kind}>")
+                list_kind = kind
+            output.append(f"<li>{inline((bullet or ordered).group(1))}</li>")
+        elif not line.strip():
+            close_list()
+        else:
+            close_list()
+            output.append(f"<p>{inline(line)}</p>")
+    if code_lines is not None:
+        output.append(f"<pre><code>{escape(chr(10).join(code_lines))}</code></pre>")
+    close_list()
+    return Markup("".join(output))
 
 
 def passkey_login_disabled() -> bool:
@@ -2866,6 +2932,7 @@ def bike_detail(request: Request, bike_id: int):
             request, bike=bike, components=components, mileage_settings=mileage_settings,
             bike_activities=bike_activities, excluded_bike_activity_count=excluded_bike_activity_count,
             strava_gear_links=strava_gear_links,
+            bike_details_html=render_bike_details_markdown(bike["details_markdown"]),
         ),
     )
 
