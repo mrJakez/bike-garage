@@ -56,7 +56,7 @@ def ghcr_build_metadata() -> dict[str, str] | None:
     return {
         "revision": revision[:7],
         "source": "Development build" if revision == "DEV" else "Published build",
-        "committed_at": committed_at.strftime("%Y-%m-%d %H:%M UTC"),
+        "committed_at": committed_at.astimezone(LOCAL_TIMEZONE).strftime("%Y-%m-%d %H:%M %Z"),
         "committed_at_iso": committed_at.isoformat().replace("+00:00", "Z"),
     }
 
