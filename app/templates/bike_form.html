@@ -21,6 +21,7 @@
       <label class="bike-photo-change" for="bike-photo">{{ 'Change photo' if editing else 'Choose photo' }}</label>
     </div>
     <input id="bike-photo" name="photo" type="file" accept="image/jpeg,image/png,image/webp" hidden data-bike-photo-input>
+    <label class="bike-editor-field bike-colour-field bike-media-colour">Chart colour <span class="bike-colour-hint">(used for bike and riding statistics)</span><input type="color" name="colour" value="{{ bike.colour if editing and bike.colour else '#2f765b' }}"></label>
     <p class="field-help">JPEG, PNG or WebP, up to 5 MB. {% if editing %}Leave it unchanged to keep the current image.{% else %}A placeholder is used until you add one.{% endif %}</p>
   </aside>
 
@@ -103,18 +104,18 @@
 </form>
 
 <style>
-  .bike-editor { display:grid; grid-template-columns:minmax(230px, .62fr) minmax(0, 1.7fr); gap:24px; align-items:start; max-width:1180px; }
+  .bike-editor { display:grid; grid-template-columns:minmax(280px, .72fr) minmax(0, 1.7fr); gap:24px; align-items:start; width:100%; max-width:1180px; min-width:0; }
   .bike-editor-media, .bike-editor-card { background:var(--paper); border:1px solid var(--line); border-radius:18px; box-shadow:0 2px 5px #1d242309; }
-  .bike-editor-media { position:sticky; top:24px; padding:18px; text-align:center; }
+  .bike-editor-media { position:sticky; top:24px; align-self:start; width:auto; min-height:0; height:fit-content; padding:18px; text-align:center; }
   .bike-photo-frame { position:relative; aspect-ratio:1; overflow:hidden; border-radius:14px; background:#e6eee9; }
-  .bike-photo-frame img { width:100%; height:100%; display:block; object-fit:cover; }
+  .bike-photo-frame img { width:100%; height:100%; display:block; object-fit:contain; }
   .bike-photo-placeholder { height:100%; display:grid; place-content:center; gap:9px; color:var(--green); background:linear-gradient(140deg,#dfece5,#f8f5ed); }
   .bike-photo-placeholder span { font-size:48px; line-height:.8; font-weight:300; }
   .bike-photo-placeholder small { color:var(--muted); font-weight:700; }
   .bike-photo-change { position:absolute; right:10px; bottom:10px; display:inline-flex; justify-content:center; padding:8px 11px; border:1px solid #fffdf9; border-radius:8px; background:#fffdf9e8; color:var(--ink); box-shadow:0 2px 8px #1d24232e; font-size:.78rem; font-weight:800; cursor:pointer; backdrop-filter:blur(4px); }
   .bike-photo-change:hover { background:#fffdf9; color:var(--green); }
-  .bike-editor-media .field-help { margin:12px 0 0; text-align:left; }
-  .bike-editor-content { display:grid; gap:18px; }
+  .bike-editor-media .field-help { margin:12px 0 0; text-align:left; }.bike-media-colour{margin-top:16px;text-align:left}
+  .bike-editor-content { display:grid; min-width:0; gap:18px; }
   .bike-editor-card { padding:24px; }
   .section-heading { display:flex; justify-content:space-between; gap:24px; margin-bottom:20px; }
   .section-heading .eyebrow { margin:0 0 4px; }
@@ -124,6 +125,7 @@
   .bike-field-wide { grid-column:1 / -1; }
   .bike-editor-field { display:grid; gap:7px; color:var(--ink); font-weight:800; }
   .bike-editor-field input, .bike-editor-field select { width:100%; min-width:0; height:48px; margin:0; padding:10px 13px; border:1px solid #cfcac0; border-radius:8px; background:#fff; color:var(--ink); font:inherit; font-size:16px; font-weight:600; line-height:1.2; }
+  .bike-colour-hint{color:var(--muted);font-size:.8rem;font-weight:600}.bike-editor-field input[type="color"]{width:100%;height:58px;padding:5px;cursor:pointer}
   .markdown-editor-field textarea{width:100%;min-height:330px;resize:vertical;margin:0;padding:14px;border:1px solid #cfcac0;border-radius:8px;background:#202522;color:#edf4ed;font:500 13px/1.55 ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;tab-size:2}.markdown-editor-field textarea:focus{outline:2px solid #9bc5b2;outline-offset:1px;border-color:var(--green)}
   .markdown-file-import{display:grid;gap:5px;width:max-content;max-width:100%;margin-top:12px;color:var(--muted);font-size:.78rem;font-weight:750}.markdown-file-import input{max-width:100%;font:inherit;font-size:.8rem}.markdown-file-import small{font-weight:500}
   .bike-editor-field select.bike-type-select { padding:10px 44px 10px 13px; background:#fff url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='16' height='16' viewBox='0 0 16 16'%3E%3Cpath d='m4 6 4 4 4-4' fill='none' stroke='%231d2423' stroke-width='1.8' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E") no-repeat right 14px center; background-size:16px; cursor:pointer; appearance:none; -webkit-appearance:none; }
@@ -147,8 +149,8 @@
   .strava-gear-add select { width:100%; height:48px; padding:10px 44px 10px 13px; border:1px solid #cfcac0; border-radius:8px; background:#fff; color:var(--ink); font:inherit; font-weight:600; appearance:none; -webkit-appearance:none; }
   .strava-gear-error { color:#9b4f18; }
   .strava-activity-type-field { max-width:420px; margin-top:20px; }
-  @media (max-width:900px) { .bike-editor { grid-template-columns:1fr; } .bike-editor-media { position:static; display:grid; grid-template-columns:150px 1fr; align-items:center; gap:0 18px; text-align:left; } .bike-editor-media .field-help { grid-column:2; } }
-  @media (max-width:620px) { .bike-field-grid, .component-editor-item { grid-template-columns:1fr; } .bike-editor-card { padding:18px; } .section-heading { display:block; } .section-heading > p { margin-top:8px; } .component-editor-icon { display:none; } .component-id-field { max-width:none; } .bike-editor-media { grid-template-columns:1fr; text-align:center; } .bike-editor-media .field-help { grid-column:auto; text-align:left; } .bike-photo-frame { max-width:220px; margin:auto; width:100%; } .strava-gear-add { grid-template-columns:1fr; } }
+  @media (max-width:900px) { .bike-editor { grid-template-columns:1fr; } .bike-editor-media { position:static; align-self:start; width:100%; min-height:0; height:auto; display:block; text-align:left; } }
+  @media (max-width:620px) { .bike-editor,.bike-editor-media,.bike-editor-content,.bike-editor-card{width:100%;min-width:0;max-width:100%;} .bike-field-grid, .component-editor-item { grid-template-columns:1fr; } .bike-editor-card { padding:18px; } .section-heading { display:block; } .section-heading > p { margin-top:8px; } .component-editor-icon { display:none; } .component-id-field { max-width:none; } .bike-editor-media { grid-template-columns:1fr; text-align:center; } .bike-editor-media .field-help { grid-column:auto; text-align:left; } .bike-photo-frame { width:100%;max-width:none;aspect-ratio:4/3;margin:0; } .bike-photo-frame img{object-fit:contain} .strava-gear-add { grid-template-columns:1fr; } }
 </style>
 <script>
   (() => {

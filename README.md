@@ -34,6 +34,12 @@ years unless you log out. Set `BIKE_GARAGE_SESSION_SECRET` on a NAS; local
 development automatically persists a fallback secret in `data/` so rebuilds do
 not invalidate the login.
 
+For a trusted local or private LAN deployment, set
+`BIKE_GARAGE_AUTH_DISABLED=true` in `.env` to skip the passkey entirely. This
+is a global switch, not a user setting: every person who can reach the app then
+has full access to the single Bike Garage account. Never enable it on a public
+or untrusted network.
+
 ## NAS reverse proxy
 
 Terminate TLS at the NAS reverse proxy and forward the application to

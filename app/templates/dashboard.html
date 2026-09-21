@@ -2,8 +2,7 @@
 {% block content %}
 <div class="page-heading dashboard-heading">
   <div>
-    <p class="eyebrow">DASHBOARD</p>
-    <h1>Your garage</h1>
+    <h1>Dashboard</h1>
     <p class="lead">Your configured bikes, their current mileage, and the most recent rides.</p>
   </div>
 </div>
@@ -32,39 +31,25 @@
 
 <section class="dashboard-section">
   <div class="dashboard-section-heading">
-    <div><p class="eyebrow">BIKES</p><h2>Configured bikes</h2></div>
+    <div><p class="eyebrow">MONTHLY RIDING</p><h2 data-month-heading>{{ monthly_bike_stats.label }}</h2></div>
     <a href="/bikes">Open garage →</a>
   </div>
-  {% if bikes %}
-  <div class="dashboard-bike-grid">
-    {% for bike in bikes %}
-    <a class="dashboard-bike-card" href="/bikes/{{ bike.id }}">
-      <img src="/bike-photos/{{ bike.photo_filename }}" alt="{{ bike.name }}">
-      <div class="dashboard-bike-copy">
-        <span class="dashboard-bike-type">{{ bike.bike_type }}</span>
-        <h3>{{ bike.name }}</h3>
-      </div>
-      <div class="dashboard-mileage">
-        <strong>{{ ((bike.total_mileage_m or 0) / 1000)|km }} <small>km</small></strong>
-        {% if bike.mileage_tracking_active %}<span>{{ ((bike.activity_mileage_m or 0) / 1000)|km }} km tracked</span>{% else %}<span>Set Garage start →</span>{% endif %}
-      </div>
-      {% if bike.latest_activity %}
-      <div class="dashboard-last-ride"><span>Last ride</span><strong>{{ bike.latest_activity.name or 'Untitled activity' }}</strong><small>{{ bike.latest_activity.started_at|activity_datetime }}</small></div>
-      {% else %}
-      <div class="dashboard-last-ride empty"><span>No assigned activity yet</span></div>
-      {% endif %}
-    </a>
-    {% endfor %}
+  <div class="dashboard-monthly-card{% if not monthly_bike_stats.has_rides %} is-empty{% endif %}">
+    <div class="dashboard-month-summary"><p data-month-summary-label>This month</p><strong data-month-distance>{{ (monthly_bike_stats.total_distance_m / 1000)|km }} <small>km</small></strong><span data-month-meta>{{ monthly_bike_stats.ride_count }} ride{% if monthly_bike_stats.ride_count != 1 %}s{% endif %} · {{ monthly_bike_stats.active_bike_count }} bike{% if monthly_bike_stats.active_bike_count != 1 %}s{% endif %} ridden</span></div>
+    <div class="dashboard-month-chart" aria-label="Riding distance from Garage start">
+      <div class="dashboard-chart-label">Managed months</div>
+      <div class="dashboard-chart-bars"><div class="dashboard-average-scale"><div class="dashboard-average-line" style="--average-height:{{ monthly_bike_stats.average_height_percent }}%"><span>Ø {{ (monthly_bike_stats.average_month_distance_m / 1000)|km }} km / month</span></div></div>{% for month in monthly_bike_stats.months %}<button type="button" class="dashboard-chart-column{% if month.is_current %} is-current{% endif %}{% if not month.selectable %} is-future{% endif %}" data-month-key="{{ month.key }}" aria-pressed="{{ 'true' if month.is_current else 'false' }}"{% if not month.selectable %} disabled aria-disabled="true" title="Not available yet"{% else %} title="Show {{ month.full_label }}"{% endif %}><span>{{ (month.distance_m / 1000)|km }}</span><i class="dashboard-chart-stack" style="--bar-height:{{ month.height_percent }}%">{% for bike in month.bikes %}<b style="--segment-share:{{ bike.share_percent }}%;--bike-colour:{{ bike.chart_colour }}"></b>{% endfor %}</i><b>{{ month.label }}</b></button>{% endfor %}</div>
+    </div>
+    <div class="dashboard-month-bikes" data-month-bikes>{% for bike in monthly_bike_stats.bikes %}<a href="/bikes/{{ bike.id }}" class="dashboard-month-bike"><img src="/bike-photos/{{ bike.photo_filename }}" alt="{{ bike.name }}"><div><strong>{{ bike.name }}</strong><span>{{ bike.ride_count }} ride{% if bike.ride_count != 1 %}s{% endif %}</span></div><div class="dashboard-bike-progress"><i><b style="--bike-share:{{ bike.share_percent }}%;--bike-colour:{{ bike.chart_colour }}"></b></i><strong>{{ (bike.distance_m / 1000)|km }} km</strong></div></a>{% else %}<div class="dashboard-month-empty"><strong>No rides with a bike this month</strong><span>Select another month or assign a bike to your activities.</span></div>{% endfor %}</div>
   </div>
-  {% else %}
-  <div class="card dashboard-empty"><h2>No bikes configured yet</h2><p>Add your first bike to see mileage and assignments here.</p><a class="button" href="/bikes/new">Add bike</a></div>
-  {% endif %}
 </section>
+
+<script id="dashboard-month-data" type="application/json">{{ monthly_bike_stats.months|tojson }}</script>
 
 <section class="dashboard-section">
   <div class="dashboard-section-heading">
     <div><p class="eyebrow">ACTIVITY STREAM</p><h2>Latest activities</h2></div>
-    <a href="/activities">View all activities →</a>
+    <a href="/activities">View all →</a>
   </div>
   {% if activities %}
   <div class="dashboard-activity-list">
@@ -95,25 +80,7 @@
   .dashboard-section-heading .eyebrow { margin:0 0 4px; }
   .dashboard-section-heading h2 { margin:0; font-size:1.45rem; }
   .dashboard-section-heading > a { color:var(--green); font-size:.9rem; font-weight:800; text-decoration:none; }
-  /* A bike card needs room for photo, identity and mileage.  Narrow columns
-     caused names and metadata to collapse character-by-character. */
-  .dashboard-bike-grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(360px,1fr)); gap:16px; }
-  .dashboard-bike-card { display:grid; grid-template-columns:86px minmax(0,1fr) minmax(102px,max-content); gap:13px; align-items:start; min-width:0; padding:15px; color:inherit; text-decoration:none; background:var(--paper); border:1px solid var(--line); border-radius:14px; box-shadow:0 1px 2px #1d24230d; }
-  .dashboard-bike-card:hover { border-color:var(--green); box-shadow:0 8px 22px #1d242314; transform:translateY(-1px); }
-  .dashboard-bike-card > img { width:86px; height:68px; border-radius:8px; object-fit:contain; background:#f2f3ef; }
-  .dashboard-bike-type { color:var(--green); font-size:.72rem; font-weight:800; letter-spacing:.06em; text-transform:uppercase; }
-  .dashboard-bike-copy { min-width:0; }
-  /* Keep card headers level: the dashboard is a quick overview, so internal
-     identifiers and frame serials stay on the bike detail page. */
-  .dashboard-bike-copy h3 { margin:2px 0 0; font-size:1.05rem; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
-  .dashboard-mileage { display:grid; min-width:102px; justify-items:end; text-align:right; white-space:nowrap; }
-  .dashboard-mileage strong { font-size:clamp(1.05rem,1.12vw,1.22rem); font-variant-numeric:tabular-nums; }
-  .dashboard-mileage small { font-size:.75em; }
-  .dashboard-mileage span { color:var(--muted); font-size:.73rem; }
-  .dashboard-last-ride { grid-column:1 / -1; display:grid; grid-template-columns:auto 1fr auto; gap:8px; align-items:center; padding-top:10px; border-top:1px solid var(--line); font-size:.8rem; }
-  .dashboard-last-ride span { color:var(--muted); }
-  .dashboard-last-ride strong { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
-  .dashboard-last-ride small { color:var(--muted); white-space:nowrap; }
+  .dashboard-monthly-card{display:grid;grid-template-columns:minmax(220px,.78fr) minmax(300px,1.22fr);gap:0;overflow:hidden;border:1px solid #bdd8c9;border-radius:18px;background:var(--paper);box-shadow:0 10px 30px #1d242312}.dashboard-month-summary{display:grid;align-content:center;gap:5px;min-height:260px;padding:30px;background:linear-gradient(145deg,#1f5d45,#2f765b);color:#fff}.dashboard-month-summary p{margin:0;color:#dcefe3;font-size:.78rem;font-weight:800;letter-spacing:.08em;text-transform:uppercase}.dashboard-month-summary strong{font-size:clamp(2.3rem,4vw,3.5rem);line-height:1;font-variant-numeric:tabular-nums}.dashboard-month-summary strong small{font-size:.4em}.dashboard-month-summary span{color:#dcefe3;font-size:.86rem}.dashboard-month-chart{display:grid;grid-template-rows:auto 1fr;padding:24px 26px 18px;background:linear-gradient(180deg,#f7fbf8,#edf6f0)}.dashboard-chart-label{color:var(--muted);font-size:.76rem;font-weight:800;letter-spacing:.07em;text-transform:uppercase}.dashboard-chart-bars{--chart-column-height:168px;position:relative;display:flex;align-items:end;justify-content:space-between;gap:10px;min-height:190px;padding-top:16px;border-bottom:1px solid #c9ddd0}.dashboard-average-scale{position:absolute;z-index:3;right:0;bottom:calc(1.08rem + 7px);left:0;height:calc(var(--chart-column-height) - 1.02rem - 1.08rem - 14px);pointer-events:none}.dashboard-average-line{position:absolute;right:0;bottom:var(--average-height);left:0;border-top:2px dashed #bb7c2d}.dashboard-average-line span{position:absolute;right:0;bottom:5px;padding:1px 5px;border-radius:4px;background:#edf6f0;color:#875f28;font-size:.65rem;font-weight:800;white-space:nowrap}.dashboard-chart-column{position:relative;z-index:1;display:grid;grid-template-rows:auto 1fr auto;align-items:end;justify-items:center;gap:7px;min-width:34px;height:var(--chart-column-height);padding:0;border:0;border-radius:6px;background:transparent;color:var(--muted);font:inherit;font-size:.72rem;cursor:pointer}.dashboard-chart-column:hover,.dashboard-chart-column:focus-visible,.dashboard-chart-column.is-current{background:#dcece2;outline:0}.dashboard-chart-column:disabled{cursor:default;opacity:.42}.dashboard-chart-column:disabled:hover{background:transparent}.dashboard-chart-column span{font-size:.68rem;font-variant-numeric:tabular-nums}.dashboard-chart-stack{display:flex!important;flex-direction:column-reverse;width:min(34px,100%);height:var(--bar-height);min-height:0;overflow:hidden;border-radius:7px 7px 2px 2px;background:#dbe8df}.dashboard-chart-stack b{display:block;flex:0 0 var(--segment-share);width:100%;min-height:0;background:var(--bike-colour)}.dashboard-chart-column>b{font-size:.72rem;font-weight:750}.dashboard-chart-column.is-current{color:var(--green)}.dashboard-chart-column.is-current .dashboard-chart-stack{box-shadow:0 5px 12px #2f765b2e}.dashboard-month-bikes{grid-column:1 / -1;display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));border-top:1px solid var(--line)}.dashboard-month-bike{display:grid;grid-template-columns:42px minmax(0,1fr);gap:10px;align-items:center;padding:14px 16px;color:inherit;text-decoration:none;border-right:1px solid var(--line)}.dashboard-month-bike:last-child{border-right:0}.dashboard-month-bike:hover{background:#f2f8f4}.dashboard-month-bike img{width:42px;height:36px;border-radius:7px;background:#f0f2ef;object-fit:contain}.dashboard-month-bike>div:nth-child(2){display:grid;min-width:0}.dashboard-month-bike>div:nth-child(2) strong{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:.86rem}.dashboard-month-bike>div:nth-child(2) span{color:var(--muted);font-size:.72rem}.dashboard-bike-progress{grid-column:1 / -1;display:grid;grid-template-columns:minmax(0,1fr) auto;align-items:center;gap:9px}.dashboard-bike-progress i{display:block;height:6px;overflow:hidden;border-radius:999px;background:#e0e9e3}.dashboard-bike-progress i b{display:block;width:var(--bike-share);height:100%;min-width:2px;border-radius:inherit;background:var(--bike-colour)}.dashboard-bike-progress strong{color:var(--green);font-size:.78rem;font-variant-numeric:tabular-nums;white-space:nowrap}.dashboard-month-empty{display:grid;grid-column:1 / -1;gap:5px;padding:22px}.dashboard-month-empty span{color:var(--muted);font-size:.84rem}.dashboard-monthly-card.is-empty .dashboard-month-summary{background:linear-gradient(145deg,#53635b,#718078)}
   .dashboard-empty p { color:var(--muted); }
   .dashboard-attention-section{padding:22px 24px 24px;border:1px solid #e6b66d;border-radius:16px;background:linear-gradient(120deg,#fff9ed,#fffdf8)}
   .dashboard-attention-section .dashboard-section-heading{margin-bottom:15px}.dashboard-attention-section .eyebrow{color:#a86616}.dashboard-attention-section .dashboard-section-heading h2{font-size:1.3rem}.dashboard-attention-lead{margin:5px 0 0;color:#806b4c;font-size:.86rem}.dashboard-attention-list{display:grid;gap:8px}.dashboard-attention-row{display:grid;grid-template-columns:32px minmax(0,1fr) auto;align-items:center;gap:11px;padding:12px 13px;border:1px solid #edd6aa;border-radius:10px;background:var(--paper);color:inherit;text-decoration:none}.dashboard-attention-row:hover{border-color:#cf9142;box-shadow:0 4px 14px #93570d14}.dashboard-attention-icon{display:grid;place-items:center;width:26px;height:26px;border-radius:50%;background:#fff0d5;color:#a86616;font-weight:900}.dashboard-attention-row h3{margin:0;font-size:.94rem}.dashboard-attention-row p{margin:2px 0 0;color:#806b4c;font-size:.79rem}.dashboard-attention-row>strong{white-space:nowrap;font-size:.9rem}
@@ -130,6 +97,30 @@
   .dashboard-activity-bikes em { color:var(--amber); font-style:normal; }
   .dashboard-activity-metrics { display:grid; align-content:start; justify-items:end; gap:2px; text-align:right; white-space:nowrap; }
   .dashboard-activity-metrics span { color:var(--muted); font-size:.78rem; }
-  @media (max-width:650px) { .dashboard-heading,.dashboard-section-heading,.dashboard-activity-row { display:block; } .dashboard-heading .button { margin-top:16px; } .dashboard-section-heading>a { display:inline-block; margin-top:9px; } .dashboard-bike-card { grid-template-columns:76px minmax(0,1fr); } .dashboard-bike-card > img { width:76px; } .dashboard-mileage { grid-column:2; justify-items:start; min-width:0; text-align:left; } .dashboard-last-ride { grid-template-columns:auto 1fr; } .dashboard-last-ride small { grid-column:2; } .dashboard-attention-section{padding:18px}.dashboard-attention-row{grid-template-columns:28px minmax(0,1fr)}.dashboard-attention-row>strong{grid-column:2} }
+  @media (max-width:650px) { .dashboard-heading,.dashboard-activity-row { display:block; } .dashboard-heading .button { margin-top:16px; } .dashboard-section-heading { display:flex; align-items:end; gap:12px; } .dashboard-section-heading>div { min-width:0; } .dashboard-section-heading h2 { font-size:1.3rem; white-space:nowrap; } .dashboard-section-heading>a { flex:none; margin:0; white-space:nowrap; } .dashboard-monthly-card{grid-template-columns:1fr}.dashboard-month-summary{min-height:0;padding:24px}.dashboard-month-chart{padding:20px 16px 14px}.dashboard-chart-bars{--chart-column-height:154px;gap:5px;min-height:174px}.dashboard-chart-column{min-width:28px}.dashboard-chart-column i{width:28px}.dashboard-month-bikes{grid-template-columns:1fr}.dashboard-month-bike{border-right:0;border-bottom:1px solid var(--line)}.dashboard-month-bike:last-child{border-bottom:0}.dashboard-attention-section{padding:18px}.dashboard-attention-row{grid-template-columns:28px minmax(0,1fr)}.dashboard-attention-row>strong{grid-column:2} }
 </style>
+<script>
+  window.addEventListener('DOMContentLoaded',()=>{
+    const source=document.querySelector('#dashboard-month-data');
+    const bikeList=document.querySelector('[data-month-bikes]');
+    if(!source||!bikeList)return;
+    let months=[];
+    try{months=JSON.parse(source.textContent||'[]')}catch(_){return}
+    const byKey=new Map(months.map(month=>[month.key,month]));
+    const heading=document.querySelector('[data-month-heading]');
+    const summaryLabel=document.querySelector('[data-month-summary-label]');
+    const distance=document.querySelector('[data-month-distance]');
+    const meta=document.querySelector('[data-month-meta]');
+    const buttons=[...document.querySelectorAll('[data-month-key]')];
+    const kilometres=value=>new Intl.NumberFormat('de-DE',{minimumFractionDigits:1,maximumFractionDigits:1}).format((Number(value)||0)/1000);
+    const plural=(count,word)=>`${count} ${word}${count===1?'':'s'}`;
+    const renderBikes=bikes=>{
+      bikeList.replaceChildren();
+      if(!bikes.length){const empty=document.createElement('div');empty.className='dashboard-month-empty';const title=document.createElement('strong');title.textContent='No rides with a bike this month';const copy=document.createElement('span');copy.textContent='Select another month or assign a bike to your activities.';empty.append(title,copy);bikeList.append(empty);return}
+      bikes.forEach(bike=>{const link=document.createElement('a');link.className='dashboard-month-bike';link.href=`/bikes/${bike.id}`;const image=document.createElement('img');image.src=`/bike-photos/${encodeURIComponent(bike.photo_filename)}`;image.alt=bike.name;const copy=document.createElement('div');const name=document.createElement('strong');name.textContent=bike.name;const rides=document.createElement('span');rides.textContent=plural(bike.ride_count,'ride');copy.append(name,rides);const progress=document.createElement('div');progress.className='dashboard-bike-progress';const track=document.createElement('i');const fill=document.createElement('b');fill.style.setProperty('--bike-share',`${bike.share_percent}%`);fill.style.setProperty('--bike-colour',bike.chart_colour);track.append(fill);const value=document.createElement('strong');value.textContent=`${kilometres(bike.distance_m)} km`;progress.append(track,value);link.append(image,copy,progress);bikeList.append(link)});
+    };
+    const selectMonth=key=>{const month=byKey.get(key);if(!month)return;heading.textContent=month.full_label;summaryLabel.textContent=month.full_label;distance.replaceChildren(document.createTextNode(`${kilometres(month.distance_m)} `),Object.assign(document.createElement('small'),{textContent:'km'}));meta.textContent=`${plural(month.ride_count,'ride')} · ${plural(month.active_bike_count,'bike')} ridden`;renderBikes(month.bikes);buttons.forEach(button=>{const selected=button.dataset.monthKey===key;button.classList.toggle('is-current',selected);button.setAttribute('aria-pressed',String(selected))})};
+    buttons.forEach(button=>button.addEventListener('click',()=>selectMonth(button.dataset.monthKey)));
+  });
+</script>
 {% endblock %}

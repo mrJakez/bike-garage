@@ -64,6 +64,11 @@ def public_origin(request: Request) -> str:
     return os.getenv("BIKE_GARAGE_PUBLIC_ORIGIN", "").strip().rstrip("/") or str(request.base_url).rstrip("/")
 
 
+def passkey_login_disabled() -> bool:
+    """Allow an explicitly trusted local deployment to run without a login."""
+    return os.getenv("BIKE_GARAGE_AUTH_DISABLED", "false").strip().lower() in {"1", "true", "yes", "on"}
+
+
 def session_secret() -> str:
     """Keep local sessions valid across rebuilds when no explicit secret is configured."""
     configured = os.getenv("BIKE_GARAGE_SESSION_SECRET", "").strip()
@@ -186,6 +191,8 @@ app.mount("/static", StaticFiles(directory=str(APP_ROOT / "static")), name="stat
 @app.middleware("http")
 async def require_passkey(request: Request, call_next):
     """Require a passkey only after the single-user account is initialized."""
+    if passkey_login_disabled():
+        return await call_next(request)
     public_paths = {"/login", "/register", "/auth/login/options", "/auth/login/verify", "/auth/register/options", "/auth/register/verify"}
     if request.url.path.startswith("/static/") or request.url.path in public_paths:
         return await call_next(request)
@@ -558,11 +565,31 @@ def connection_identifier_is_available(db: object, identifier: str, *, exclude_i
 
 
 def duration_label(value: object, *, milliseconds: bool = False) -> str:
-    try:
-        seconds = int(float(value) / 1000) if milliseconds else int(float(value))
-    except (TypeError, ValueError):
+    seconds = duration_seconds(value, milliseconds=milliseconds)
+    if seconds is None:
         return "—"
-    return str(timedelta(seconds=max(0, seconds)))
+    return str(timedelta(seconds=seconds))
+
+
+def duration_seconds(value: object, *, milliseconds: bool = False) -> int | None:
+    try:
+        return max(0, int(float(value) / 1000) if milliseconds else int(float(value)))
+    except (TypeError, ValueError):
+        return None
+
+
+def activity_time_range(value: object, duration: int | None) -> str:
+    """Render a local start–end time range for compact activity cards."""
+    if not value:
+        return "—"
+    try:
+        started_at = datetime.fromisoformat(str(value).replace("Z", "+00:00"))
+        if started_at.tzinfo is not None:
+            started_at = started_at.astimezone(LOCAL_TIMEZONE)
+        start = started_at.strftime("%H:%M")
+        return f"{start}–{(started_at + timedelta(seconds=duration)).strftime('%H:%M')}" if duration is not None else start
+    except (TypeError, ValueError):
+        return format_activity_time(value)
 
 
 def provider_duration(payload: dict[str, object], provider_type: str | None) -> object:
@@ -716,6 +743,7 @@ def page_context(request: Request, *, activity_filters: dict[str, object] | None
         for activity in activities:
             activity["route_polyline"] = None
             activity["duration_label"] = "—"
+            activity["time_range"] = format_activity_time(activity["started_at"])
             # Keep one entry per linked source: two Strava accounts should
             # deliberately appear as two Strava marks in the stream.
             activity["provider_types"] = [
@@ -736,9 +764,11 @@ def page_context(request: Request, *, activity_filters: dict[str, object] | None
                     )
                 if activity["duration_label"] == "—":
                     raw_duration = provider_duration(payload, provider["provider_type"])
+                    seconds = duration_seconds(raw_duration, milliseconds=provider["provider_type"] == "HAMMERHEAD")
                     activity["duration_label"] = duration_label(
                         raw_duration, milliseconds=provider["provider_type"] == "HAMMERHEAD"
                     )
+                    activity["time_range"] = activity_time_range(activity["started_at"], seconds)
         activity_bikes: dict[int, list[dict[str, object]]] = {}
         for row in db.execute(
             """
@@ -856,6 +886,8 @@ def reapply_rules_to_all_activities(db: object) -> tuple[int, int]:
 
 @app.get("/login")
 def login_page(request: Request):
+    if passkey_login_disabled():
+        return RedirectResponse("/", status_code=303)
     with connection() as db:
         configured = has_passkey(db)
     if request.session.get("authenticated"):
@@ -867,6 +899,8 @@ def login_page(request: Request):
 
 @app.get("/register")
 def register_passkey_page(request: Request):
+    if passkey_login_disabled():
+        return RedirectResponse("/", status_code=303)
     if not registration_enabled():
         return RedirectResponse("/login?notice=Passkey+registration+is+disabled", status_code=303)
     return templates.TemplateResponse(request, "passkey_register.html", {})
@@ -931,9 +965,94 @@ def logout(request: Request):
     return RedirectResponse("/login", status_code=303)
 
 
+def month_boundary(reference: datetime, offset: int = 0) -> datetime:
+    """Return the local midnight at the first day of a relative month."""
+    absolute_month = reference.month - 1 + offset
+    return datetime(reference.year + absolute_month // 12, absolute_month % 12 + 1, 1, tzinfo=LOCAL_TIMEZONE)
+
+
+def dashboard_monthly_bike_stats(user_id: int) -> dict[str, object]:
+    """Summarise managed, bike-assigned riding for the dashboard overview."""
+    now = datetime.now(LOCAL_TIMEZONE)
+    with connection() as db:
+        settings = db.execute(
+            "SELECT mileage_tracking_started_at_epoch FROM user_settings WHERE user_id=?", (user_id,)
+        ).fetchone()
+        garage_start = int(settings["mileage_tracking_started_at_epoch"]) if settings and settings["mileage_tracking_started_at_epoch"] is not None else None
+        current_month = month_boundary(now)
+        if garage_start is None:
+            month_starts = [month_boundary(current_month, offset) for offset in range(-5, 1)]
+        else:
+            first_managed_month = month_boundary(datetime.fromtimestamp(garage_start, LOCAL_TIMEZONE))
+            managed_month_count = (current_month.year - first_managed_month.year) * 12 + current_month.month - first_managed_month.month + 1
+            visible_month_count = max(0, min(6, managed_month_count))
+            first_visible_month = month_boundary(first_managed_month, max(0, managed_month_count - 6))
+            month_starts = [month_boundary(first_visible_month, offset) for offset in range(visible_month_count)]
+            while len(month_starts) < 6:
+                month_starts.append(month_boundary(month_starts[-1] if month_starts else current_month, 1))
+        months: list[dict[str, object]] = []
+        for start in month_starts:
+            end = month_boundary(start, 1)
+            lower_bound = max(int(start.timestamp()), garage_start or 0)
+            row = db.execute(
+                """SELECT COALESCE(SUM(a.distance_m),0) AS distance_m,COUNT(*) AS ride_count
+                   FROM activities a WHERE a.deleted_at IS NULL
+                     AND COALESCE(a.started_at_epoch,0)>=? AND COALESCE(a.started_at_epoch,0)<?
+                     AND EXISTS (SELECT 1 FROM activity_bike_assignments aba WHERE aba.activity_id=a.id)""",
+                (lower_bound, int(end.timestamp())),
+            ).fetchone()
+            bike_rows = db.execute(
+                """SELECT b.id,b.name,b.photo_filename,b.colour,COALESCE(SUM(a.distance_m),0) AS distance_m,
+                          COUNT(DISTINCT a.id) AS ride_count
+                   FROM bikes b
+                   JOIN activity_bike_assignments aba ON aba.bike_id=b.id
+                   JOIN activities a ON a.id=aba.activity_id
+                   WHERE b.user_id=? AND a.deleted_at IS NULL
+                     AND COALESCE(a.started_at_epoch,0)>=? AND COALESCE(a.started_at_epoch,0)<?
+                   GROUP BY b.id HAVING COALESCE(SUM(a.distance_m),0)>0
+                   ORDER BY distance_m DESC,b.name COLLATE NOCASE""",
+                (user_id, lower_bound, int(end.timestamp())),
+            ).fetchall()
+            total_distance_m = float(row["distance_m"] or 0)
+            bikes = []
+            for bike_row in bike_rows:
+                distance_m = float(bike_row["distance_m"] or 0)
+                bikes.append({
+                    **dict(bike_row), "distance_m": distance_m,
+                    "share_percent": round(distance_m / total_distance_m * 100) if total_distance_m else 0,
+                    "chart_colour": bike_colour(bike_row["colour"]),
+                })
+            months.append({
+                "key": start.strftime("%Y-%m"), "label": start.strftime("%b"),
+                "full_label": start.strftime("%B %Y"), "distance_m": total_distance_m,
+                "ride_count": int(row["ride_count"] or 0), "active_bike_count": len(bikes), "bikes": bikes,
+                "selectable": start <= current_month, "is_current": start == current_month,
+            })
+    selected_month = next((month for month in months if month["key"] == current_month.strftime("%Y-%m")), months[-1])
+    max_month_distance = max((float(month["distance_m"]) for month in months), default=0.0)
+    managed_months = [month for month in months if month["selectable"]]
+    average_month_distance_m = sum(float(month["distance_m"]) for month in managed_months) / len(managed_months) if managed_months else 0.0
+    for month in months:
+        month["height_percent"] = round(float(month["distance_m"]) / max_month_distance * 100) if max_month_distance else 0
+    return {
+        "label": selected_month["full_label"],
+        "total_distance_m": selected_month["distance_m"],
+        "ride_count": selected_month["ride_count"],
+        "active_bike_count": selected_month["active_bike_count"],
+        "bikes": selected_month["bikes"],
+        "months": months,
+        "average_month_distance_m": average_month_distance_m,
+        "average_height_percent": round(average_month_distance_m / max_month_distance * 100) if max_month_distance else 0,
+        "has_rides": float(selected_month["distance_m"] or 0) > 0,
+    }
+
+
 @app.get("/")
 def dashboard(request: Request):
-    return templates.TemplateResponse(request, "dashboard.html", page_context(request))
+    user = initial_user()
+    return templates.TemplateResponse(
+        request, "dashboard.html", page_context(request, monthly_bike_stats=dashboard_monthly_bike_stats(user["id"]))
+    )
 
 
 @app.get("/providers")
@@ -1094,6 +1213,15 @@ async def import_provider_connections(archive: UploadFile = File(...)):
 
 
 BIKE_ARCHIVE_IMAGE_TYPES = {"image/jpeg": ".jpg", "image/png": ".png", "image/webp": ".webp"}
+BIKE_COLOUR_DEFAULT = "#2f765b"
+
+
+def bike_colour(value: object) -> str:
+    """Accept a CSS hex colour while keeping chart data safe and predictable."""
+    candidate = str(value or BIKE_COLOUR_DEFAULT).strip().lower()
+    if not re.fullmatch(r"#[0-9a-f]{6}", candidate):
+        raise ValueError("Choose a valid bike colour.")
+    return candidate
 
 
 def bike_archive_photo(filename: str) -> dict[str, str] | None:
@@ -1135,7 +1263,7 @@ def export_bikes():
             records.append({
                 "name": bike["name"], "identifier": bike["identifier"], "bike_type": bike["bike_type"],
                 "frame_number": bike["frame_number"], "details_markdown": bike["details_markdown"],
-                "starting_mileage_m": bike["starting_mileage_m"], "strava_activity_type": bike["strava_activity_type"],
+                "starting_mileage_m": bike["starting_mileage_m"], "colour": bike["colour"], "strava_activity_type": bike["strava_activity_type"],
                 "components": components, "strava_gears": strava_gears, "photo": bike_archive_photo(bike["photo_filename"]),
             })
     export_document = {"format": "bike-garage-bikes", "version": 1, "exported_at": datetime.now(UTC).isoformat(), "bikes": records}
@@ -1166,8 +1294,9 @@ def parse_bike_archive(document: object) -> list[dict[str, object]]:
         frame, details = bike_configuration_fields(record.get("frame_number"), record.get("details_markdown"))
         try:
             mileage = max(0, float(record.get("starting_mileage_m") or 0))
+            colour = bike_colour(record.get("colour"))
         except (TypeError, ValueError) as error:
-            raise ValueError("A bike has an invalid starting mileage.") from error
+            raise ValueError("A bike has an invalid starting mileage or colour.") from error
         activity_type = record.get("strava_activity_type")
         if activity_type is not None and activity_type not in BIKE_STRAVA_ACTIVITY_TYPE_VALUES:
             raise ValueError("A bike has an invalid Strava activity type.")
@@ -1197,7 +1326,7 @@ def parse_bike_archive(document: object) -> list[dict[str, object]]:
         gears = record.get("strava_gears") or []
         if not isinstance(gears, list) or any(not isinstance(item, dict) or not isinstance(item.get("connection_identifier"), str) or not isinstance(item.get("external_gear_id"), str) for item in gears):
             raise ValueError("A bike has invalid Strava bike mappings.")
-        parsed.append({"name": name.strip(), "identifier": identifier, "bike_type": bike_type, "frame_number": frame, "details_markdown": details, "starting_mileage_m": mileage, "strava_activity_type": activity_type, "components": components, "photo_bytes": photo_bytes, "photo_suffix": photo_suffix, "strava_gears": gears})
+        parsed.append({"name": name.strip(), "identifier": identifier, "bike_type": bike_type, "frame_number": frame, "details_markdown": details, "starting_mileage_m": mileage, "colour": colour, "strava_activity_type": activity_type, "components": components, "photo_bytes": photo_bytes, "photo_suffix": photo_suffix, "strava_gears": gears})
     return parsed
 
 
@@ -1220,11 +1349,11 @@ async def import_bikes(archive: UploadFile = File(...)):
             if record["photo_bytes"] is not None:
                 photo_filename = f"{secrets.token_hex(16)}{record['photo_suffix']}"
                 (PHOTO_ROOT / photo_filename).write_bytes(record["photo_bytes"])
-            values = (record["name"], record["bike_type"], record["frame_number"], record["details_markdown"], photo_filename, record["starting_mileage_m"], record["strava_activity_type"])
+            values = (record["name"], record["bike_type"], record["frame_number"], record["details_markdown"], photo_filename, record["starting_mileage_m"], record["colour"], record["strava_activity_type"])
             if existing:
-                db.execute("UPDATE bikes SET name=?,bike_type=?,frame_number=?,details_markdown=?,photo_filename=?,starting_mileage_m=?,strava_activity_type=?,updated_at=CURRENT_TIMESTAMP WHERE id=?", (*values, bike_id)); updated += 1
+                db.execute("UPDATE bikes SET name=?,bike_type=?,frame_number=?,details_markdown=?,photo_filename=?,starting_mileage_m=?,colour=?,strava_activity_type=?,updated_at=CURRENT_TIMESTAMP WHERE id=?", (*values, bike_id)); updated += 1
             else:
-                bike_id = db.execute("INSERT INTO bikes (user_id,name,identifier,bike_type,owner_name,frame_number,details_markdown,photo_filename,starting_mileage_m,strava_activity_type) VALUES (?,?,?,?,?,?,?,?,?,?)", (user["id"], record["name"], record["identifier"], record["bike_type"], user["display_name"], record["frame_number"], record["details_markdown"], photo_filename, record["starting_mileage_m"], record["strava_activity_type"])).lastrowid; created += 1
+                bike_id = db.execute("INSERT INTO bikes (user_id,name,identifier,bike_type,owner_name,frame_number,details_markdown,photo_filename,starting_mileage_m,colour,strava_activity_type) VALUES (?,?,?,?,?,?,?,?,?,?,?)", (user["id"], record["name"], record["identifier"], record["bike_type"], user["display_name"], record["frame_number"], record["details_markdown"], photo_filename, record["starting_mileage_m"], record["colour"], record["strava_activity_type"])).lastrowid; created += 1
             save_bike_components(db, bike_id, record["components"])
             db.execute("DELETE FROM bike_strava_gear_mappings WHERE bike_id=?", (bike_id,))
             for gear in record["strava_gears"]:
@@ -2035,7 +2164,10 @@ def activity_detail(request: Request, activity_uuid: str):
                 payload = enriched
                 route_polyline = (payload.get("map") or {}).get("summary_polyline")
                 with connection() as db:
-                    db.execute("UPDATE provider_activities SET raw_json=?, imported_at=CURRENT_TIMESTAMP WHERE id=?", (json.dumps(enriched), item["id"]))
+                    # This is a detail refresh, not a new provider import.
+                    # Keep imported_at immutable so the activity timeline
+                    # continues to show when the source first arrived.
+                    db.execute("UPDATE provider_activities SET raw_json=? WHERE id=?", (json.dumps(enriched), item["id"]))
             except Exception:
                 pass
         if item["provider_type"] == "HAMMERHEAD":
@@ -2058,10 +2190,15 @@ def activity_detail(request: Request, activity_uuid: str):
                     "SELECT * FROM provider_activity_hardware WHERE provider_activity_id=? ORDER BY id", (item["id"],)
                 ).fetchall()]
         providers.append(item)
+    strava_activity_url = next((
+        f"https://www.strava.com/activities/{item['external_activity_id']}"
+        for item in providers
+        if item["provider_type"] in {"STRAVA", "STRAVA_PROXY"} and item.get("external_activity_id")
+    ), None)
     return templates.TemplateResponse(
         request,
         "activity_detail.html",
-        page_context(request, activity=activity, provider_activities=providers, route_polyline=route_polyline, bike_assignments=assignments, resolver_runs=resolver_runs, activity_logs=activity_logs),
+        page_context(request, activity=activity, provider_activities=providers, route_polyline=route_polyline, bike_assignments=assignments, resolver_runs=resolver_runs, activity_logs=activity_logs, strava_activity_url=strava_activity_url),
     )
 
 
@@ -2553,6 +2690,7 @@ async def create_bike(
     name: str | None = Form(None), identifier: str | None = Form(None), bike_type: str | None = Form(None),
     frame_number: str | None = Form(None), details_markdown: str | None = Form(None), photo: UploadFile | None = File(None),
     starting_mileage_km: str | None = Form(None),
+    colour: str | None = Form(None),
     shifting_ant_device_number: str | None = Form(None), bike_power_ant_device_number: str | None = Form(None),
     seatpost_ant_device_number: str | None = Form(None),
     strava_gear_ids: list[str] = Form([]),
@@ -2577,6 +2715,7 @@ async def create_bike(
         component_ant_ids = component_ant_ids_from_form(locals())
         starting_mileage_m = max(0, float(starting_mileage_km or "0") * 1000)
         cleaned_frame_number, cleaned_details_markdown = bike_configuration_fields(frame_number, details_markdown)
+        cleaned_colour = bike_colour(colour)
     except ValueError as error:
         return RedirectResponse("/bikes/new?" + urlencode({"notice": str(error)}), status_code=303)
     user = initial_user()
@@ -2588,10 +2727,10 @@ async def create_bike(
             return RedirectResponse("/bikes/new?" + urlencode({"notice": str(error)}), status_code=303)
         cursor = db.execute(
             """INSERT INTO bikes
-               (user_id, name, identifier, bike_type, owner_name, frame_number, details_markdown, photo_filename, starting_mileage_m, strava_activity_type)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+               (user_id, name, identifier, bike_type, owner_name, frame_number, details_markdown, photo_filename, starting_mileage_m, colour, strava_activity_type)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
             (user["id"], name.strip(), identifier.strip(), bike_type.strip(), user["display_name"], cleaned_frame_number,
-             cleaned_details_markdown, photo_filename, starting_mileage_m, strava_activity_type or None),
+             cleaned_details_markdown, photo_filename, starting_mileage_m, cleaned_colour, strava_activity_type or None),
         )
         save_bike_components(db, cursor.lastrowid, component_ant_ids)
         save_bike_strava_gears(db, cursor.lastrowid, strava_gear_ids)
@@ -2601,7 +2740,8 @@ async def create_bike(
 @app.get("/bikes/{bike_id}")
 def bike_detail(request: Request, bike_id: int):
     user = initial_user()
-    mileage_entries: list[dict[str, object]] = []
+    bike_activities: list[dict[str, object]] = []
+    excluded_bike_activity_count = 0
     strava_gear_links: list[dict[str, object]] = []
     with connection() as db:
         bike = db.execute("SELECT * FROM bikes WHERE id = ?", (bike_id,)).fetchone()
@@ -2612,20 +2752,26 @@ def bike_detail(request: Request, bike_id: int):
             mileage_settings = attach_bike_mileage(db, [bike_data], user["id"])
             bike = bike_data
             tracking_start = mileage_settings.get("mileage_tracking_started_at_epoch")
+            activity_query = """
+                SELECT a.id AS activity_id, a.public_id AS activity_public_id,
+                       a.name, a.started_at, a.distance_m, a.sport_type,
+                       aba.slot_index, aba.source
+                FROM activity_bike_assignments aba
+                JOIN activities a ON a.id = aba.activity_id
+                WHERE aba.bike_id = ? AND a.deleted_at IS NULL
+            """
+            activity_params: tuple[object, ...] = (bike_id,)
             if tracking_start is not None:
-                mileage_entries = [dict(row) for row in db.execute(
-                    """
-                    SELECT a.id AS activity_id, a.public_id AS activity_public_id,
-                           a.name, a.started_at, a.distance_m,
-                           aba.slot_index, aba.source
-                    FROM activity_bike_assignments aba
-                    JOIN activities a ON a.id = aba.activity_id
-            WHERE aba.bike_id = ? AND a.started_at_epoch >= ? AND a.deleted_at IS NULL
-                    ORDER BY COALESCE(a.started_at_epoch, 0) DESC, a.id DESC, aba.slot_index ASC
-                    LIMIT 10
-                    """,
+                activity_query += " AND a.started_at_epoch >= ?"
+                activity_params += (tracking_start,)
+                excluded_bike_activity_count = int(db.execute(
+                    """SELECT COUNT(DISTINCT a.id)
+                       FROM activity_bike_assignments aba JOIN activities a ON a.id=aba.activity_id
+                       WHERE aba.bike_id=? AND a.deleted_at IS NULL AND a.started_at_epoch<?""",
                     (bike_id, tracking_start),
-                ).fetchall()]
+                ).fetchone()[0] or 0)
+            activity_query += " ORDER BY COALESCE(a.started_at_epoch, 0) DESC, a.id DESC, aba.slot_index ASC"
+            bike_activities = [dict(row) for row in db.execute(activity_query, activity_params).fetchall()]
             strava_gear_links = [dict(row) for row in db.execute(
                 """
                 SELECT sg.name, sg.external_gear_id, sg.distance_m, sg.is_primary,
@@ -2644,7 +2790,8 @@ def bike_detail(request: Request, bike_id: int):
         request, "bike_detail.html",
         page_context(
             request, bike=bike, components=components, mileage_settings=mileage_settings,
-            mileage_entries=mileage_entries, strava_gear_links=strava_gear_links,
+            bike_activities=bike_activities, excluded_bike_activity_count=excluded_bike_activity_count,
+            strava_gear_links=strava_gear_links,
         ),
     )
 
@@ -2671,6 +2818,7 @@ async def update_bike(
     bike_id: int, name: str | None = Form(None), identifier: str | None = Form(None), bike_type: str | None = Form(None),
     frame_number: str | None = Form(None), details_markdown: str | None = Form(None),
     starting_mileage_km: str | None = Form(None),
+    colour: str | None = Form(None),
     photo: UploadFile | None = File(None),
     shifting_ant_device_number: str | None = Form(None), bike_power_ant_device_number: str | None = Form(None),
     seatpost_ant_device_number: str | None = Form(None),
@@ -2696,6 +2844,7 @@ async def update_bike(
         starting_mileage_m = max(0, float(starting_mileage_km or "0") * 1000)
         component_ant_ids = component_ant_ids_from_form(locals())
         cleaned_frame_number, cleaned_details_markdown = bike_configuration_fields(frame_number, details_markdown)
+        cleaned_colour = bike_colour(colour)
     except ValueError as error:
         return RedirectResponse(
             f"/bikes/{bike_id}/edit?" + urlencode({"notice": str(error)}),
@@ -2722,9 +2871,9 @@ async def update_bike(
             return RedirectResponse(f"/bikes/{bike_id}/edit?" + urlencode({"notice": str(error)}), status_code=303)
         db.execute(
             """UPDATE bikes SET name=?, identifier=?, bike_type=?, frame_number=?, details_markdown=?, photo_filename=?,
-               starting_mileage_m=?, strava_activity_type=?, updated_at=CURRENT_TIMESTAMP WHERE id=?""",
+               starting_mileage_m=?, colour=?, strava_activity_type=?, updated_at=CURRENT_TIMESTAMP WHERE id=?""",
             (name.strip(), identifier.strip(), bike_type.strip(), cleaned_frame_number, cleaned_details_markdown,
-             photo_filename, starting_mileage_m, strava_activity_type or None, bike_id),
+             photo_filename, starting_mileage_m, cleaned_colour, strava_activity_type or None, bike_id),
         )
         save_bike_components(db, bike_id, component_ant_ids)
         save_bike_strava_gears(db, bike_id, strava_gear_ids)

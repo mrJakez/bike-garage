@@ -73,6 +73,7 @@ def initialise_database() -> None:
                 details_markdown TEXT NOT NULL DEFAULT '',
                 photo_filename TEXT NOT NULL,
                 starting_mileage_m REAL NOT NULL DEFAULT 0,
+                colour TEXT NOT NULL DEFAULT '#2f765b',
                 strava_activity_type TEXT,
                 created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
                 updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
@@ -304,6 +305,8 @@ def initialise_database() -> None:
                 db.execute("UPDATE bikes SET identifier=? WHERE id=?", (f"bike-{bike['id']}", bike["id"]))
         if "starting_mileage_m" not in bike_columns:
             db.execute("ALTER TABLE bikes ADD COLUMN starting_mileage_m REAL NOT NULL DEFAULT 0")
+        if "colour" not in bike_columns:
+            db.execute("ALTER TABLE bikes ADD COLUMN colour TEXT NOT NULL DEFAULT '#2f765b'")
         if "frame_number" not in bike_columns:
             db.execute("ALTER TABLE bikes ADD COLUMN frame_number TEXT")
         if "details_markdown" not in bike_columns:
@@ -332,6 +335,29 @@ def initialise_database() -> None:
         db.execute(
             "CREATE UNIQUE INDEX IF NOT EXISTS idx_activities_public_id "
             "ON activities(public_id) WHERE public_id IS NOT NULL AND public_id <> ''"
+        )
+        # A former on-demand Hammerhead detail refresh accidentally replaced
+        # imported_at. FIT observations are saved during the original import,
+        # so they provide the trustworthy first-import timestamp for affected
+        # historical records.
+        db.execute(
+            """UPDATE provider_activities AS activity
+               SET imported_at = (
+                   SELECT MIN(hardware.created_at)
+                   FROM provider_activity_hardware AS hardware
+                   WHERE hardware.provider_activity_id = activity.id
+               )
+               WHERE EXISTS (
+                   SELECT 1 FROM provider_connections AS provider
+                   WHERE provider.id = activity.connection_id
+                     AND provider.provider_type = 'HAMMERHEAD'
+               )
+                 AND EXISTS (
+                   SELECT 1 FROM provider_activity_hardware AS hardware
+                   WHERE hardware.provider_activity_id = activity.id
+                   GROUP BY hardware.provider_activity_id
+                   HAVING MIN(hardware.created_at) < activity.imported_at
+               )"""
         )
         rule_columns = {row["name"] for row in db.execute("PRAGMA table_info(resolver_rules)")}
         if "is_catch_all" not in rule_columns:
