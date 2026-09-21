@@ -733,7 +733,9 @@ def page_context(request: Request, *, activity_filters: dict[str, object] | None
         provider_data: dict[int, list[dict[str, object]]] = {}
         for row in db.execute(
             """
-            SELECT apl.activity_id, pa.raw_json, pc.provider_type
+            SELECT apl.activity_id, pa.id AS provider_activity_id, pa.name AS provider_activity_title,
+                   pa.raw_json, pc.provider_type, pc.identifier AS connection_identifier,
+                   pc.display_name AS connection_name
             FROM activity_provider_links apl
             JOIN provider_activities pa ON pa.id = apl.provider_activity_id
             JOIN provider_connections pc ON pc.id = pa.connection_id
@@ -746,8 +748,12 @@ def page_context(request: Request, *, activity_filters: dict[str, object] | None
             activity["time_range"] = format_activity_time(activity["started_at"])
             # Keep one entry per linked source: two Strava accounts should
             # deliberately appear as two Strava marks in the stream.
-            activity["provider_types"] = [
-                str(provider["provider_type"])
+            activity["provider_activities"] = [
+                {
+                    "provider": str(provider["provider_type"]),
+                    "connection": str(provider["connection_identifier"] or provider["connection_name"] or "Unknown provider"),
+                    "title": str(provider["provider_activity_title"] or "Unnamed activity"),
+                }
                 for provider in provider_data.get(activity["id"], [])
             ]
             for provider in provider_data.get(activity["id"], []):
@@ -1884,6 +1890,16 @@ async def test_rule_inline(request: Request, rule_id: int):
         assigned_rows = db.execute("SELECT b.* FROM activity_bike_assignments aba JOIN bikes b ON b.id=aba.bike_id WHERE aba.activity_id=? ORDER BY aba.slot_index", (activity_id,)).fetchall()
         rows = db.execute("SELECT pa.id AS provider_activity_id, pc.provider_type AS provider, pc.identifier AS connection, pc.external_account_id AS account, pa.name AS title, pa.sport_type AS sport_type, pa.distance_m AS distance_m, pa.started_at AS started_at, pa.raw_json AS raw_json FROM activity_provider_links apl JOIN provider_activities pa ON pa.id=apl.provider_activity_id JOIN provider_connections pc ON pc.id=pa.connection_id WHERE apl.activity_id=?", (activity_id,)).fetchall()
         rows = attach_hardware_observations(db, rows)
+        provider_snapshot = [
+            {
+                "id": int(row["provider_activity_id"]),
+                "connection": str(row["connection"] or "Unknown provider"),
+                "provider": str(row["provider"] or ""),
+                "title": str(row["title"] or "Unnamed activity"),
+                "started_at": str(row["started_at"] or ""),
+            }
+            for row in rows
+        ]
     if rule is None: return RedirectResponse("/rules?notice=Rule+not+found", status_code=303)
     # Save the current edit form before running the test, so the test always
     # evaluates exactly what the user sees in the editor.
@@ -1952,9 +1968,9 @@ async def test_rule_inline(request: Request, rule_id: int):
             # only through the explicit confirmation on an activity detail.
             db.execute(
                 """INSERT INTO activity_rule_runs
-                   (activity_id,resolution_id,rule_id,rule_name,result_text,log_output_json,applied)
-                   VALUES (?,?,?,?,?,?,?)""",
-                (activity_id, f"manual-{secrets.token_hex(8)}", rule["id"], rule["name"], result_text, json.dumps(logs), 1),
+                   (activity_id,resolution_id,rule_id,rule_name,result_text,log_output_json,provider_snapshot_json,applied)
+                   VALUES (?,?,?,?,?,?,?,?)""",
+                (activity_id, f"manual-{secrets.token_hex(8)}", rule["id"], rule["name"], result_text, json.dumps(logs), json.dumps(provider_snapshot), 1),
             )
     return templates.TemplateResponse(
         request,
@@ -2066,7 +2082,7 @@ def activity_detail(request: Request, activity_uuid: str):
             (activity_id,),
         ).fetchall()
         run_rows = db.execute(
-            """SELECT resolution_id, rule_name, result_text, log_output_json, applied, created_at, id
+            """SELECT resolution_id, rule_name, result_text, log_output_json, provider_snapshot_json, applied, created_at, id
                FROM activity_rule_runs WHERE activity_id=? ORDER BY id DESC LIMIT 180""",
             (activity_id,),
         ).fetchall()
@@ -2091,6 +2107,34 @@ def activity_detail(request: Request, activity_uuid: str):
         )
         group["rules"].insert(0, item)
     resolver_runs = list(resolver_runs_by_id.values())
+    # A resolver run records the exact provider activities linked at that
+    # moment. Comparing resolver executions chronologically shows whether a
+    # fresh source arrived or existing provider data changed afterwards.
+    snapshots_by_resolution: dict[str, tuple[list[dict[str, object]], list[dict[str, object]], bool]] = {}
+    previous_provider_ids: set[int] | None = None
+    for row in reversed(run_rows):
+        resolution_id = str(row["resolution_id"])
+        if resolution_id in snapshots_by_resolution:
+            continue
+        try:
+            snapshot = json.loads(row["provider_snapshot_json"] or "[]")
+        except json.JSONDecodeError:
+            snapshot = []
+        snapshot = [item for item in snapshot if isinstance(item, dict)] if isinstance(snapshot, list) else []
+        provider_ids = {
+            int(item["id"])
+            for item in snapshot
+            if str(item.get("id", "")).isdigit()
+        }
+        added = (
+            snapshot
+            if previous_provider_ids is None
+            else [item for item in snapshot if str(item.get("id", "")).isdigit() and int(item["id"]) not in previous_provider_ids]
+        )
+        snapshots_by_resolution[resolution_id] = (snapshot, added, previous_provider_ids is not None)
+        if snapshot:
+            previous_provider_ids = provider_ids
+
     activity_logs: list[dict[str, object]] = []
     for row in run_rows:
         item = dict(row)
@@ -2103,10 +2147,30 @@ def activity_detail(request: Request, activity_uuid: str):
         # flooding the table with one row per print statement.
         if not messages:
             messages = [f"Result: {item['result_text']}" + (" · applied" if item["applied"] else "")]
+        snapshot, added, has_previous_snapshot = snapshots_by_resolution.get(
+            str(item["resolution_id"]), ([], [], False)
+        )
+        added_ids = {
+            int(source["id"])
+            for source in added
+            if str(source.get("id", "")).isdigit()
+        }
+        log_providers = [
+            {
+                "provider": str(source.get("provider") or ""),
+                "connection": str(source.get("connection") or source.get("provider") or "Unknown provider"),
+                "title": str(source.get("title") or "Unnamed activity"),
+                "is_new": int(source["id"]) in added_ids if str(source.get("id", "")).isdigit() else False,
+            }
+            for source in snapshot
+        ]
         activity_logs.append({
             "created_at": item["created_at"],
             "logger": f"rule_{item['rule_name']}",
             "message": "\n".join(str(message) for message in messages),
+            "provider_activities": log_providers,
+            "provider_snapshot_available": bool(snapshot),
+            "provider_snapshot_changed": bool(added) if has_previous_snapshot else False,
             "sort_id": item["id"],
         })
     for row in ui_log_rows:
@@ -2428,6 +2492,16 @@ def test_rule_from_activity(activity_uuid: str, rule_id: int):
             (activity_id,),
         ).fetchall()
         provider_rows = attach_hardware_observations(db, provider_rows)
+        provider_snapshot = [
+            {
+                "id": int(row["provider_activity_id"]),
+                "connection": str(row["connection"] or "Unknown provider"),
+                "provider": str(row["provider"] or ""),
+                "title": str(row["title"] or "Unnamed activity"),
+                "started_at": str(row["started_at"] or ""),
+            }
+            for row in provider_rows
+        ]
         logs: list[str] = []
         applied = False
         try:
@@ -2464,9 +2538,9 @@ def test_rule_from_activity(activity_uuid: str, rule_id: int):
             logs.append(f"Rule test failed: {error}")
         db.execute(
             """INSERT INTO activity_rule_runs
-               (activity_id,resolution_id,rule_id,rule_name,result_text,log_output_json,applied)
-               VALUES (?,?,?,?,?,?,?)""",
-            (activity_id, f"manual-{secrets.token_hex(8)}", rule["id"], rule["name"], result_text, json.dumps(logs), int(applied)),
+               (activity_id,resolution_id,rule_id,rule_name,result_text,log_output_json,provider_snapshot_json,applied)
+               VALUES (?,?,?,?,?,?,?,?)""",
+            (activity_id, f"manual-{secrets.token_hex(8)}", rule["id"], rule["name"], result_text, json.dumps(logs), json.dumps(provider_snapshot), int(applied)),
         )
     notice = f"Rule {rule['name']} tested" if applied else f"Rule {rule['name']} did not apply"
     return RedirectResponse(f"/activities/{activity_uuid}?" + urlencode({"notice": notice}), status_code=303)

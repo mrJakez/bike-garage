@@ -508,10 +508,23 @@ def import_connection(connection_row: Any) -> int:
             started = epoch_from_activity(activity)
             displayed_start = display_started_at(activity, connection_row["provider_type"])
             exists = db.execute(
-                "SELECT id FROM provider_activities WHERE connection_id = ? AND external_activity_id = ?",
+                """SELECT id, sport_type, started_at_epoch, distance_m
+                   FROM provider_activities WHERE connection_id = ? AND external_activity_id = ?""",
                 (connection_row["id"], external_id),
             ).fetchone()
             if exists:
+                incoming_type = activity.get("sport_type") or activity.get("type")
+                incoming_distance = float(activity.get("distance") or 0)
+                # Re-matching a source that is already linked is both costly
+                # and unstable for rides that happen close together. The
+                # source only needs a fresh canonical match when one of the
+                # matching inputs changed; raw provider payload updates (such
+                # as new hardware data) are still saved and re-resolved below.
+                matching_input_changed = (
+                    exists["sport_type"] != incoming_type
+                    or exists["started_at_epoch"] != started
+                    or abs(float(exists["distance_m"] or 0) - incoming_distance) > 0.01
+                )
                 # Hammerhead list imports are enriched with the Activity detail
                 # (including its polyline) on later syncs as well.
                 db.execute(
@@ -520,29 +533,33 @@ def import_connection(connection_row: Any) -> int:
                        WHERE id=?""",
                     (
                         activity.get("name") or "Unnamed activity",
-                        activity.get("sport_type") or activity.get("type"),
+                        incoming_type,
                         displayed_start, started,
-                        float(activity.get("distance") or 0), json.dumps(activity), exists["id"],
+                        incoming_distance, json.dumps(activity), exists["id"],
                     ),
                 )
-                # Re-run canonical linking after provider metadata changes.
-                # This resolves records that were initially imported with a
-                # provider-specific completion timestamp instead of a start.
                 previous_ids = [row["activity_id"] for row in db.execute(
                     "SELECT activity_id FROM activity_provider_links WHERE provider_activity_id = ?", (exists["id"],)
                 ).fetchall()]
-                # Exclude its current canonical Activity. Otherwise an exact
-                # self-match wins before we can compare the record to another
-                # provider's near-identical activity.
-                canonical_id = find_matching_canonical(
-                    db, activity, started, exclude_ids=previous_ids, source_connection_id=connection_row["id"],
-                )
-                if canonical_id is None:
-                    canonical_id = previous_ids[0] if previous_ids else find_or_create_canonical(
-                        db, activity, started, displayed_start_at=displayed_start, source_connection_id=connection_row["id"],
+                if matching_input_changed or not previous_ids:
+                    # Exclude its current canonical Activity. Otherwise an
+                    # exact self-match wins before we can compare this source
+                    # to another provider's near-identical activity.
+                    canonical_id = find_matching_canonical(
+                        db, activity, started, exclude_ids=previous_ids, source_connection_id=connection_row["id"],
                     )
-                db.execute("DELETE FROM activity_provider_links WHERE provider_activity_id = ?", (exists["id"],))
-                db.execute("INSERT OR IGNORE INTO activity_provider_links (activity_id, provider_activity_id) VALUES (?, ?)", (canonical_id, exists["id"]))
+                    if canonical_id is None:
+                        canonical_id = previous_ids[0] if previous_ids else find_or_create_canonical(
+                            db, activity, started, displayed_start_at=displayed_start,
+                            source_connection_id=connection_row["id"],
+                        )
+                    db.execute("DELETE FROM activity_provider_links WHERE provider_activity_id = ?", (exists["id"],))
+                    db.execute(
+                        "INSERT OR IGNORE INTO activity_provider_links (activity_id, provider_activity_id) VALUES (?, ?)",
+                        (canonical_id, exists["id"]),
+                    )
+                else:
+                    canonical_id = previous_ids[0]
                 if connection_row["provider_type"] == "HAMMERHEAD":
                     fetch_missing_hammerhead_hardware(db, connection_row, exists["id"], external_id)
                 apply_rule(db, canonical_id, activity_type, connection_row["external_account_id"])
@@ -684,6 +701,16 @@ def apply_rule(
            JOIN provider_connections pc ON pc.id = pa.connection_id
            WHERE apl.activity_id = ?""", (activity_id,)).fetchall()
     rows = attach_hardware_observations(db, rows)
+    provider_snapshot = [
+        {
+            "id": int(row["provider_activity_id"]),
+            "connection": str(row["connection"] or "Unknown provider"),
+            "provider": str(row["provider"] or ""),
+            "title": str(row["title"] or "Unnamed activity"),
+            "started_at": str(row["started_at"] or ""),
+        }
+        for row in rows
+    ]
     bike_rows = [dict(row) for row in db.execute("SELECT * FROM bikes ORDER BY name").fetchall()]
     for bike in bike_rows:
         bike["components"] = [dict(component) for component in db.execute(
@@ -700,9 +727,9 @@ def apply_rule(
         result_text = "null" if result is None else str(result).lower() if isinstance(result, bool) else str(result)
         db.execute(
             """INSERT INTO activity_rule_runs
-               (activity_id,resolution_id,rule_id,rule_name,result_text,log_output_json,applied)
-               VALUES (?,?,?,?,?,?,?)""",
-            (activity_id, resolution_id, rule["id"], rule["name"], result_text, json.dumps(rule_logs), int(applied)),
+               (activity_id,resolution_id,rule_id,rule_name,result_text,log_output_json,provider_snapshot_json,applied)
+               VALUES (?,?,?,?,?,?,?,?)""",
+            (activity_id, resolution_id, rule["id"], rule["name"], result_text, json.dumps(rule_logs), json.dumps(provider_snapshot), int(applied)),
         )
         if result is None or result is False:
             continue

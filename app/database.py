@@ -176,6 +176,7 @@ def initialise_database() -> None:
                 rule_name TEXT NOT NULL,
                 result_text TEXT NOT NULL,
                 log_output_json TEXT NOT NULL DEFAULT '[]',
+                provider_snapshot_json TEXT NOT NULL DEFAULT '[]',
                 applied INTEGER NOT NULL DEFAULT 0,
                 created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
             );
@@ -299,6 +300,9 @@ def initialise_database() -> None:
         db.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_provider_connections_identifier ON provider_connections(identifier) WHERE identifier <> ''")
         activity_columns = {row["name"] for row in db.execute("PRAGMA table_info(activities)")}
         bike_columns = {row["name"] for row in db.execute("PRAGMA table_info(bikes)")}
+        rule_run_columns = {row["name"] for row in db.execute("PRAGMA table_info(activity_rule_runs)")}
+        if "provider_snapshot_json" not in rule_run_columns:
+            db.execute("ALTER TABLE activity_rule_runs ADD COLUMN provider_snapshot_json TEXT NOT NULL DEFAULT '[]'")
         if "identifier" not in bike_columns:
             db.execute("ALTER TABLE bikes ADD COLUMN identifier TEXT NOT NULL DEFAULT ''")
             for bike in db.execute("SELECT id, name FROM bikes WHERE identifier = ''").fetchall():
