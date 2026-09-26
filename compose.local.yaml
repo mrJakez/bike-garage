@@ -12,6 +12,7 @@ services:
       BIKE_GARAGE_PASSKEY_RP_ID: ${BIKE_GARAGE_PASSKEY_RP_ID:-}
       BIKE_GARAGE_PASSKEY_ORIGIN: ${BIKE_GARAGE_PASSKEY_ORIGIN:-}
       BIKE_GARAGE_PUBLIC_ORIGIN: ${BIKE_GARAGE_PUBLIC_ORIGIN:-}
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
     volumes:
       - ./data:/app/data
       - ./app:/app/app

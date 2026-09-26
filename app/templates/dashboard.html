@@ -29,6 +29,23 @@
 </section>
 {% endif %}
 
+{% if component_alerts %}
+<section class="dashboard-section dashboard-component-alert-section">
+  <div class="dashboard-section-heading">
+    <div><p class="eyebrow">COMPONENT WARNINGS</p><h2>{{ component_alerts|length }} component{{ 's' if component_alerts|length != 1 else '' }} need attention</h2><p class="dashboard-component-alert-lead">Service components before they exceed their recommended mileage.</p></div>
+  </div>
+  <div class="dashboard-component-alert-list">
+    {% for component in component_alerts %}
+    <a class="dashboard-component-alert-row is-{{ component.state }}" href="/bikes/{{ component.bike_id }}">
+      <span class="dashboard-component-alert-icon" aria-hidden="true">{% if component.state == 'due' %}!{% else %}↗{% endif %}</span>
+      <div><h3>{{ component.name }}</h3><p>{{ component.bike_name }} · {{ component.component_type }} · {{ (component.tracked_mileage_m / 1000)|km }} / {{ (component.expected_lifetime_m / 1000)|km }} km</p></div>
+      <strong>{% if component.state == 'due' %}Replace due{% else %}Service soon{% endif %}</strong>
+    </a>
+    {% endfor %}
+  </div>
+</section>
+{% endif %}
+
 <section class="dashboard-section">
   <div class="dashboard-section-heading">
     <div><p class="eyebrow">MONTHLY RIDING</p><h2 data-month-heading>{{ monthly_bike_stats.label }}</h2></div>
@@ -98,6 +115,9 @@
   .dashboard-activity-metrics { display:grid; align-content:start; justify-items:end; gap:2px; text-align:right; white-space:nowrap; }
   .dashboard-activity-metrics span { color:var(--muted); font-size:.78rem; }
   @media (max-width:650px) { .dashboard-heading,.dashboard-activity-row { display:block; } .dashboard-heading .button { margin-top:16px; } .dashboard-section-heading { display:flex; align-items:end; gap:12px; } .dashboard-section-heading>div { min-width:0; } .dashboard-section-heading h2 { font-size:1.3rem; white-space:nowrap; } .dashboard-section-heading>a { flex:none; margin:0; white-space:nowrap; } .dashboard-monthly-card{grid-template-columns:1fr}.dashboard-month-summary{min-height:0;padding:24px}.dashboard-month-chart{padding:20px 16px 14px}.dashboard-chart-bars{--chart-column-height:154px;gap:5px;min-height:174px}.dashboard-chart-column{min-width:28px}.dashboard-chart-column i{width:28px}.dashboard-month-bikes{grid-template-columns:1fr}.dashboard-month-bike{border-right:0;border-bottom:1px solid var(--line)}.dashboard-month-bike:last-child{border-bottom:0}.dashboard-attention-section{padding:18px}.dashboard-attention-row{grid-template-columns:28px minmax(0,1fr)}.dashboard-attention-row>strong{grid-column:2} }
+</style>
+<style>
+  .dashboard-component-alert-section{padding:22px 24px 24px;border:1px solid #e6b66d;border-radius:16px;background:linear-gradient(120deg,#fff9ed,#fffdf8)}.dashboard-component-alert-section .dashboard-section-heading{margin-bottom:15px}.dashboard-component-alert-section .eyebrow{color:#a86616}.dashboard-component-alert-section .dashboard-section-heading h2{font-size:1.3rem}.dashboard-component-alert-lead{margin:5px 0 0;color:#806b4c;font-size:.86rem}.dashboard-component-alert-list{display:grid;gap:8px}.dashboard-component-alert-row{display:grid;grid-template-columns:32px minmax(0,1fr) auto;align-items:center;gap:11px;padding:12px 13px;border:1px solid #edd6aa;border-radius:10px;background:var(--paper);color:inherit;text-decoration:none}.dashboard-component-alert-row:hover{border-color:#cf9142;box-shadow:0 4px 14px #93570d14}.dashboard-component-alert-icon{display:grid;place-items:center;width:26px;height:26px;border-radius:50%;background:#fff0d5;color:#a86616;font-weight:900}.dashboard-component-alert-row.is-due .dashboard-component-alert-icon{background:#fff0ed;color:#a33b2f}.dashboard-component-alert-row h3{margin:0;font-size:.94rem}.dashboard-component-alert-row p{margin:2px 0 0;color:#806b4c;font-size:.79rem}.dashboard-component-alert-row>strong{white-space:nowrap;color:#9a621b;font-size:.86rem}.dashboard-component-alert-row.is-due>strong{color:#a33b2f}@media(max-width:650px){.dashboard-component-alert-section{padding:18px}.dashboard-component-alert-row{grid-template-columns:28px minmax(0,1fr)}.dashboard-component-alert-row>strong{grid-column:2}}
 </style>
 <script>
   window.addEventListener('DOMContentLoaded',()=>{

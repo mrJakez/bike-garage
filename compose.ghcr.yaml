@@ -15,5 +15,6 @@ services:
       BIKE_GARAGE_PASSKEY_RP_ID: ${BIKE_GARAGE_PASSKEY_RP_ID:?Set the public hostname in .env}
       BIKE_GARAGE_PASSKEY_ORIGIN: ${BIKE_GARAGE_PASSKEY_ORIGIN:?Set the public HTTPS origin in .env}
       BIKE_GARAGE_PUBLIC_ORIGIN: ${BIKE_GARAGE_PUBLIC_ORIGIN:?Set the public HTTPS origin in .env}
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
     volumes:
       - ./data:/app/data

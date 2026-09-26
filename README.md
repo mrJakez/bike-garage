@@ -40,6 +40,15 @@ is a global switch, not a user setting: every person who can reach the app then
 has full access to the single Bike Garage account. Never enable it on a public
 or untrusted network.
 
+## OpenAI component recommendations
+
+Bike Garage can research a conservative service-life recommendation while you
+add a wear component. Add an API key under **Settings → OpenAI research**, or
+set `OPENAI_API_KEY` in `.env`. The key is used only after selecting **Ask AI
+for recommendation** in the component form; the selected Responses API model
+uses OpenAI web search and returns suggested warning/replacement kilometres
+with source links.
+
 ## NAS reverse proxy
 
 Terminate TLS at the NAS reverse proxy and forward the application to

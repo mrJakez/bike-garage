@@ -59,6 +59,8 @@ def initialise_database() -> None:
                 scheduler_enabled INTEGER NOT NULL DEFAULT 1,
                 scheduler_interval_seconds INTEGER,
                 strava_auto_update_enabled INTEGER NOT NULL DEFAULT 0,
+                openai_api_key TEXT,
+                openai_model TEXT NOT NULL DEFAULT 'gpt-5.5',
                 updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
             );
 
@@ -168,6 +170,37 @@ def initialise_database() -> None:
                 UNIQUE (activity_id, bike_id, slot_index)
             );
 
+            CREATE TABLE IF NOT EXISTS bike_manual_mileage_entries (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                bike_id INTEGER NOT NULL REFERENCES bikes(id) ON DELETE CASCADE,
+                entry_date TEXT NOT NULL,
+                entry_epoch INTEGER NOT NULL,
+                comment TEXT NOT NULL,
+                distance_m REAL NOT NULL CHECK (distance_m > 0),
+                created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+            );
+            CREATE INDEX IF NOT EXISTS idx_bike_manual_mileage_entries_timeline
+                ON bike_manual_mileage_entries(bike_id, entry_epoch DESC, id DESC);
+
+            CREATE TABLE IF NOT EXISTS bike_wear_components (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                bike_id INTEGER NOT NULL REFERENCES bikes(id) ON DELETE CASCADE,
+                component_type TEXT NOT NULL,
+                name TEXT NOT NULL,
+                installed_date TEXT NOT NULL,
+                installed_epoch INTEGER NOT NULL,
+                expected_lifetime_m REAL NOT NULL CHECK (expected_lifetime_m > 0),
+                warning_threshold REAL NOT NULL DEFAULT 0.8 CHECK (warning_threshold > 0 AND warning_threshold <= 1),
+                recommendation_notes TEXT,
+                recommendation_sources_json TEXT NOT NULL DEFAULT '[]',
+                status TEXT NOT NULL DEFAULT 'ACTIVE' CHECK (status IN ('ACTIVE', 'RETIRED')),
+                retired_at TEXT,
+                created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+            );
+            CREATE INDEX IF NOT EXISTS idx_bike_wear_components_bike_status
+                ON bike_wear_components(bike_id, status, installed_epoch DESC, id DESC);
+
             CREATE TABLE IF NOT EXISTS activity_rule_runs (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 activity_id INTEGER NOT NULL REFERENCES activities(id) ON DELETE CASCADE,
@@ -260,6 +293,10 @@ def initialise_database() -> None:
             db.execute("ALTER TABLE user_settings ADD COLUMN scheduler_interval_seconds INTEGER")
         if "strava_auto_update_enabled" not in user_settings_columns:
             db.execute("ALTER TABLE user_settings ADD COLUMN strava_auto_update_enabled INTEGER NOT NULL DEFAULT 0")
+        if "openai_api_key" not in user_settings_columns:
+            db.execute("ALTER TABLE user_settings ADD COLUMN openai_api_key TEXT")
+        if "openai_model" not in user_settings_columns:
+            db.execute("ALTER TABLE user_settings ADD COLUMN openai_model TEXT NOT NULL DEFAULT 'gpt-5.5'")
         for name, definition in (
             ("identifier", "TEXT NOT NULL DEFAULT ''"),
             ("last_tested_at", "TEXT"),

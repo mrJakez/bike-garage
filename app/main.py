@@ -15,6 +15,8 @@ import time
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from urllib.parse import parse_qs, urlencode
+from urllib.error import HTTPError, URLError
+from urllib.request import Request as UrlRequest, urlopen
 from zoneinfo import ZoneInfo
 
 from fastapi import FastAPI, File, Form, Request, UploadFile
@@ -216,7 +218,7 @@ def format_kilometres(value: object, decimals: int = 1) -> str:
 
 
 def attach_bike_mileage(db: object, bikes: list[dict[str, object]], user_id: int) -> dict[str, object]:
-    """Attach the baseline plus eligible assigned-activity distance to bikes."""
+    """Attach baseline, eligible activity, and manual-entry mileage to bikes."""
     setting_row = db.execute(
         "SELECT mileage_tracking_started_at, mileage_tracking_started_at_epoch FROM user_settings WHERE user_id=?",
         (user_id,),
@@ -236,13 +238,178 @@ def attach_bike_mileage(db: object, bikes: list[dict[str, object]], user_id: int
             (started_epoch,),
         ).fetchall():
             tracked_by_bike[int(row["bike_id"])] = float(row["distance_m"] or 0)
+    manual_by_bike = {
+        int(row["bike_id"]): float(row["distance_m"] or 0)
+        for row in db.execute(
+            """SELECT bike_id, COALESCE(SUM(distance_m), 0) AS distance_m
+               FROM bike_manual_mileage_entries
+               GROUP BY bike_id"""
+        ).fetchall()
+    }
     for bike in bikes:
         baseline = float(bike.get("starting_mileage_m") or 0)
-        tracked = tracked_by_bike.get(int(bike["id"]), 0)
+        activity_mileage = tracked_by_bike.get(int(bike["id"]), 0)
+        manual_mileage = manual_by_bike.get(int(bike["id"]), 0)
+        tracked = activity_mileage + manual_mileage
         bike["activity_mileage_m"] = tracked
+        bike["manual_mileage_m"] = manual_mileage
         bike["total_mileage_m"] = baseline + tracked
         bike["mileage_tracking_active"] = started_epoch is not None
     return settings
+
+
+WEAR_COMPONENT_TYPES = (
+    "Chain", "Cassette", "Chainring", "Front tyre", "Rear tyre",
+    "Front brake pads", "Rear brake pads", "Front brake rotor", "Rear brake rotor",
+    "Bottom bracket", "Wheel bearings", "Other",
+)
+
+
+def openai_research_settings(db: object, user_id: int) -> dict[str, str | bool]:
+    """Resolve the local OpenAI connection without exposing its API key."""
+    row = db.execute(
+        "SELECT openai_api_key, openai_model FROM user_settings WHERE user_id=?", (user_id,)
+    ).fetchone()
+    saved_key = str(row["openai_api_key"] or "").strip() if row else ""
+    environment_key = os.getenv("OPENAI_API_KEY", "").strip()
+    key = saved_key or environment_key
+    return {
+        "api_key": key,
+        "model": str(row["openai_model"] or "gpt-5.5").strip() if row else "gpt-5.5",
+        "configured": bool(key),
+        "source": "Bike Garage settings" if saved_key else ("environment" if environment_key else ""),
+    }
+
+
+def response_json_payload(text: object) -> dict[str, object]:
+    """Accept a JSON response with or without an incidental Markdown fence."""
+    raw = str(text or "").strip()
+    if raw.startswith("```"):
+        raw = re.sub(r"^```(?:json)?\s*|\s*```$", "", raw, flags=re.IGNORECASE)
+    start, end = raw.find("{"), raw.rfind("}")
+    if start < 0 or end < start:
+        raise ValueError("The recommendation response did not contain JSON.")
+    payload = json.loads(raw[start:end + 1])
+    if not isinstance(payload, dict):
+        raise ValueError("The recommendation response has an invalid format.")
+    return payload
+
+
+def response_output_text(result: object) -> str:
+    """Read the final text from both SDK-shaped and raw Responses API payloads."""
+    if not isinstance(result, dict):
+        raise ValueError("The recommendation response has an invalid format.")
+    direct_text = result.get("output_text")
+    if isinstance(direct_text, str) and direct_text.strip():
+        return direct_text
+    for item in result.get("output", []):
+        if not isinstance(item, dict) or item.get("type") != "message":
+            continue
+        for content in item.get("content", []):
+            if isinstance(content, dict) and content.get("type") == "output_text" and isinstance(content.get("text"), str):
+                return content["text"]
+    raise ValueError("The recommendation response did not contain a final answer.")
+
+
+def openai_component_recommendation(api_key: str, model: str, component_type: str, component_name: str) -> dict[str, object]:
+    """Research a conservative wear-distance recommendation with OpenAI web search."""
+    prompt = f"""Research a conservative bicycle component service-life recommendation.
+Component type: {component_type}
+Component/model: {component_name}
+
+Use web search. Prefer the component manufacturer, then reputable bicycle-maintenance sources.
+Return only a JSON object in this exact shape:
+{{
+  "recommended_km": 0,
+  "warning_km": 0,
+  "summary": "one concise sentence, including important assumptions",
+  "sources": [{{"title": "source title", "url": "https://..."}}]
+}}
+Use whole kilometres. If a source gives a range, choose a conservative value. This is a maintenance
+recommendation, not a safety guarantee. Include at most three sources."""
+    payload = {
+        "model": model or "gpt-5.5",
+        "tools": [{"type": "web_search", "search_context_size": "low"}],
+        "tool_choice": "required",
+        "include": ["web_search_call.action.sources"],
+        "input": prompt,
+    }
+    request = UrlRequest(
+        "https://api.openai.com/v1/responses",
+        data=json.dumps(payload).encode("utf-8"),
+        headers={"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"},
+        method="POST",
+    )
+    try:
+        with urlopen(request, timeout=35) as response:
+            result = json.loads(response.read().decode("utf-8"))
+    except HTTPError as error:
+        detail = error.read().decode("utf-8", errors="replace")[:300]
+        raise ValueError(f"OpenAI request failed ({error.code}): {detail}") from error
+    except (URLError, TimeoutError) as error:
+        raise ValueError("OpenAI could not be reached. Check the connection and try again.") from error
+    recommendation = response_json_payload(response_output_text(result))
+    try:
+        recommended_km = int(round(float(recommendation.get("recommended_km") or 0)))
+        warning_km = int(round(float(recommendation.get("warning_km") or 0)))
+    except (TypeError, ValueError) as error:
+        raise ValueError("OpenAI returned an invalid kilometre recommendation.") from error
+    if not 0 < recommended_km <= 1_000_000 or not 0 < warning_km <= recommended_km:
+        raise ValueError("OpenAI returned an implausible kilometre recommendation.")
+    sources = recommendation.get("sources")
+    safe_sources: list[dict[str, str]] = []
+    if isinstance(sources, list):
+        for source in sources[:3]:
+            if not isinstance(source, dict):
+                continue
+            url, title = str(source.get("url") or ""), str(source.get("title") or "Source")
+            if re.match(r"^https?://", url):
+                safe_sources.append({"title": title[:160], "url": url[:2000]})
+    return {
+        "recommended_km": recommended_km,
+        "warning_km": warning_km,
+        "summary": str(recommendation.get("summary") or "").strip()[:1000],
+        "sources": safe_sources,
+    }
+
+
+def attach_component_mileage(db: object, bike_id: int, user_id: int) -> list[dict[str, object]]:
+    """Calculate component mileage from eligible activities and manual entries."""
+    tracking = db.execute(
+        "SELECT mileage_tracking_started_at_epoch FROM user_settings WHERE user_id=?", (user_id,)
+    ).fetchone()
+    garage_start = int(tracking["mileage_tracking_started_at_epoch"] or 0) if tracking else 0
+    activity_tracking_active = garage_start > 0
+    components = [dict(row) for row in db.execute(
+        """SELECT * FROM bike_wear_components WHERE bike_id=? AND status='ACTIVE'
+           ORDER BY installed_epoch DESC, id DESC""",
+        (bike_id,),
+    ).fetchall()]
+    for component in components:
+        lower_bound = max(garage_start, int(component["installed_epoch"]))
+        activity_mileage = 0.0
+        if activity_tracking_active:
+            activity_mileage = float(db.execute(
+                """SELECT COALESCE(SUM(a.distance_m), 0)
+                   FROM activity_bike_assignments assignment
+                   JOIN activities a ON a.id=assignment.activity_id
+                   WHERE assignment.bike_id=? AND a.deleted_at IS NULL AND a.started_at_epoch >= ?""",
+                (bike_id, lower_bound),
+            ).fetchone()[0] or 0)
+        manual_mileage = float(db.execute(
+            """SELECT COALESCE(SUM(distance_m), 0) FROM bike_manual_mileage_entries
+               WHERE bike_id=? AND entry_epoch >= ?""",
+            (bike_id, int(component["installed_epoch"])),
+        ).fetchone()[0] or 0)
+        mileage_m = activity_mileage + manual_mileage
+        expected_m = float(component["expected_lifetime_m"])
+        warning_m = expected_m * float(component["warning_threshold"])
+        component["warning_mileage_m"] = warning_m
+        component["tracked_mileage_m"] = mileage_m
+        component["tracked_ratio"] = min(1, mileage_m / expected_m)
+        component["state"] = "due" if mileage_m >= expected_m else ("service" if mileage_m >= warning_m else "ok")
+        component["sources"] = json.loads(component["recommendation_sources_json"] or "[]")
+    return components
 
 
 templates.env.filters["activity_datetime"] = format_activity_datetime
@@ -1119,11 +1286,41 @@ def dashboard_monthly_bike_stats(user_id: int) -> dict[str, object]:
     }
 
 
+def dashboard_component_alerts(user_id: int) -> list[dict[str, object]]:
+    """Return active wear components that have reached their service threshold."""
+    alerts: list[dict[str, object]] = []
+    with connection() as db:
+        bikes = db.execute(
+            "SELECT id, name FROM bikes WHERE user_id=? ORDER BY name COLLATE NOCASE", (user_id,)
+        ).fetchall()
+        for bike in bikes:
+            for component in attach_component_mileage(db, int(bike["id"]), user_id):
+                if component["state"] == "ok":
+                    continue
+                component["bike_id"] = int(bike["id"])
+                component["bike_name"] = str(bike["name"])
+                alerts.append(component)
+    alerts.sort(
+        key=lambda component: (
+            0 if component["state"] == "due" else 1,
+            -float(component["tracked_ratio"]),
+            str(component["name"]).casefold(),
+        )
+    )
+    return alerts
+
+
 @app.get("/")
 def dashboard(request: Request):
     user = initial_user()
     return templates.TemplateResponse(
-        request, "dashboard.html", page_context(request, monthly_bike_stats=dashboard_monthly_bike_stats(user["id"]))
+        request,
+        "dashboard.html",
+        page_context(
+            request,
+            monthly_bike_stats=dashboard_monthly_bike_stats(user["id"]),
+            component_alerts=dashboard_component_alerts(user["id"]),
+        ),
     )
 
 
@@ -1654,14 +1851,16 @@ def deactivate_all_provider_connections():
 
 @app.get("/settings")
 def settings_page(request: Request):
+    user = initial_user()
     with connection() as db:
         passkey = db.execute(
-            "SELECT created_at,last_used_at FROM passkeys WHERE user_id=?", (initial_user()["id"],)
+            "SELECT created_at,last_used_at FROM passkeys WHERE user_id=?", (user["id"],)
         ).fetchone()
         strava_auto_update = db.execute(
-            "SELECT strava_auto_update_enabled FROM user_settings WHERE user_id=?", (initial_user()["id"],)
+            "SELECT strava_auto_update_enabled FROM user_settings WHERE user_id=?", (user["id"],)
         ).fetchone()
         strava_auto_update_enabled = bool(strava_auto_update["strava_auto_update_enabled"]) if strava_auto_update else False
+        openai_settings = openai_research_settings(db, user["id"])
     scheduler_enabled, scheduler_interval_seconds = scheduler_configuration()
     return templates.TemplateResponse(
         request,
@@ -1672,6 +1871,9 @@ def settings_page(request: Request):
             scheduler_enabled=scheduler_enabled,
             scheduler_interval_minutes=scheduler_interval_seconds // 60,
             strava_auto_update_enabled=strava_auto_update_enabled,
+            openai_configured=bool(openai_settings["configured"]),
+            openai_source=str(openai_settings["source"]),
+            openai_model=str(openai_settings["model"]),
         ),
     )
 
@@ -1721,6 +1923,31 @@ async def update_strava_auto_update_settings(request: Request):
     state = "enabled" if enabled else "disabled"
     return RedirectResponse(
         "/settings?" + urlencode({"notice": f"Automatic Strava activity updates {state}"}), status_code=303,
+    )
+
+
+@app.post("/settings/openai")
+async def update_openai_settings(request: Request):
+    form = parse_qs((await request.body()).decode("utf-8"), keep_blank_values=True)
+    submitted_key = form.get("api_key", [""])[0].strip()
+    clear_key = form.get("clear_key", [""])[0] == "1"
+    model = form.get("model", ["gpt-5.5"])[0].strip() or "gpt-5.5"
+    if not re.fullmatch(r"[A-Za-z0-9._-]{1,80}", model):
+        return RedirectResponse("/settings?notice=Enter+a+valid+OpenAI+model+name", status_code=303)
+    user = initial_user()
+    with connection() as db:
+        existing = db.execute("SELECT openai_api_key FROM user_settings WHERE user_id=?", (user["id"],)).fetchone()
+        key = None if clear_key else (submitted_key or (existing["openai_api_key"] if existing else None))
+        db.execute(
+            """INSERT INTO user_settings (user_id,openai_api_key,openai_model,updated_at)
+               VALUES (?,?,?,CURRENT_TIMESTAMP)
+               ON CONFLICT(user_id) DO UPDATE SET openai_api_key=excluded.openai_api_key,
+                 openai_model=excluded.openai_model, updated_at=CURRENT_TIMESTAMP""",
+            (user["id"], key, model),
+        )
+    return RedirectResponse(
+        "/settings?" + urlencode({"notice": "OpenAI connection updated" if key else "OpenAI key cleared"}),
+        status_code=303,
     )
 
 
@@ -2881,9 +3108,13 @@ async def create_bike(
 def bike_detail(request: Request, bike_id: int):
     user = initial_user()
     bike_activities: list[dict[str, object]] = []
+    mileage_entries: list[dict[str, object]] = []
     excluded_bike_activity_count = 0
     strava_gear_links: list[dict[str, object]] = []
+    wear_components: list[dict[str, object]] = []
+    openai_settings: dict[str, str | bool] = {"configured": False, "model": "gpt-5.5", "source": ""}
     with connection() as db:
+        openai_settings = openai_research_settings(db, user["id"])
         bike = db.execute("SELECT * FROM bikes WHERE id = ?", (bike_id,)).fetchone()
         components = db.execute("SELECT * FROM bike_components WHERE bike_id=? ORDER BY component_type", (bike_id,)).fetchall()
         mileage_settings: dict[str, object] = {"mileage_tracking_started_at": None}
@@ -2891,10 +3122,11 @@ def bike_detail(request: Request, bike_id: int):
             bike_data = dict(bike)
             mileage_settings = attach_bike_mileage(db, [bike_data], user["id"])
             bike = bike_data
+            wear_components = attach_component_mileage(db, bike_id, user["id"])
             tracking_start = mileage_settings.get("mileage_tracking_started_at_epoch")
             activity_query = """
                 SELECT a.id AS activity_id, a.public_id AS activity_public_id,
-                       a.name, a.started_at, a.distance_m, a.sport_type,
+                       a.name, a.started_at, a.started_at_epoch, a.distance_m, a.sport_type,
                        aba.slot_index, aba.source
                 FROM activity_bike_assignments aba
                 JOIN activities a ON a.id = aba.activity_id
@@ -2912,6 +3144,28 @@ def bike_detail(request: Request, bike_id: int):
                 ).fetchone()[0] or 0)
             activity_query += " ORDER BY COALESCE(a.started_at_epoch, 0) DESC, a.id DESC, aba.slot_index ASC"
             bike_activities = [dict(row) for row in db.execute(activity_query, activity_params).fetchall()]
+            mileage_entries = [
+                {
+                    **entry,
+                    "entry_type": "activity",
+                    "timeline_epoch": int(entry.get("started_at_epoch") or 0),
+                }
+                for entry in bike_activities
+            ]
+            mileage_entries.extend(
+                {
+                    **dict(entry),
+                    "entry_type": "manual",
+                    "timeline_epoch": int(entry["entry_epoch"]),
+                }
+                for entry in db.execute(
+                    """SELECT id, entry_date, entry_epoch, comment, distance_m
+                       FROM bike_manual_mileage_entries
+                       WHERE bike_id=?""",
+                    (bike_id,),
+                ).fetchall()
+            )
+            mileage_entries.sort(key=lambda entry: (int(entry["timeline_epoch"]), int(entry.get("id") or 0)), reverse=True)
             strava_gear_links = [dict(row) for row in db.execute(
                 """
                 SELECT sg.name, sg.external_gear_id, sg.distance_m, sg.is_primary,
@@ -2930,9 +3184,16 @@ def bike_detail(request: Request, bike_id: int):
         request, "bike_detail.html",
         page_context(
             request, bike=bike, components=components, mileage_settings=mileage_settings,
-            bike_activities=bike_activities, excluded_bike_activity_count=excluded_bike_activity_count,
+            bike_activities=bike_activities, mileage_entries=mileage_entries,
+            manual_mileage_entry_count=sum(1 for entry in mileage_entries if entry["entry_type"] == "manual"),
+            excluded_bike_activity_count=excluded_bike_activity_count,
             strava_gear_links=strava_gear_links,
             bike_details_html=render_bike_details_markdown(bike["details_markdown"]),
+            manual_mileage_entry_date=datetime.now(LOCAL_TIMEZONE).date().isoformat(),
+            wear_components=wear_components,
+            wear_component_types=WEAR_COMPONENT_TYPES,
+            component_install_date=datetime.now(LOCAL_TIMEZONE).date().isoformat(),
+            openai_configured=bool(openai_settings["configured"]),
         ),
     )
 
@@ -3019,6 +3280,188 @@ async def update_bike(
         save_bike_components(db, bike_id, component_ant_ids)
         save_bike_strava_gears(db, bike_id, strava_gear_ids)
     return RedirectResponse(f"/bikes/{bike_id}?notice=Bike+updated", status_code=303)
+
+
+@app.post("/bikes/{bike_id}/mileage-entries")
+async def add_manual_bike_mileage_entry(
+    bike_id: int,
+    entry_date: str = Form(...),
+    comment: str = Form(...),
+    mileage_km: str = Form(...),
+):
+    """Add a dated manual distance adjustment to a bike's calculated mileage."""
+    cleaned_comment = comment.strip()
+    try:
+        parsed_date = datetime.strptime(entry_date.strip(), "%Y-%m-%d").replace(tzinfo=LOCAL_TIMEZONE)
+        distance_m = float(mileage_km.strip().replace(",", ".")) * 1000
+        if not cleaned_comment:
+            raise ValueError("A comment is required.")
+        if not 0 < distance_m <= 1_000_000_000:
+            raise ValueError("Mileage must be greater than zero.")
+    except ValueError as error:
+        message = str(error) or "Enter a valid date and mileage."
+        return RedirectResponse(f"/bikes/{bike_id}?" + urlencode({"notice": message}), status_code=303)
+    user = initial_user()
+    with connection() as db:
+        bike = db.execute("SELECT id FROM bikes WHERE id=? AND user_id=?", (bike_id, user["id"])).fetchone()
+        if bike is None:
+            return RedirectResponse("/bikes?notice=Bike+not+found", status_code=303)
+        db.execute(
+            """INSERT INTO bike_manual_mileage_entries (bike_id, entry_date, entry_epoch, comment, distance_m)
+               VALUES (?, ?, ?, ?, ?)""",
+            (bike_id, parsed_date.date().isoformat(), int(parsed_date.timestamp()), cleaned_comment, distance_m),
+        )
+        db.execute("UPDATE bikes SET updated_at=CURRENT_TIMESTAMP WHERE id=?", (bike_id,))
+    return RedirectResponse(f"/bikes/{bike_id}?notice=Manual+mileage+entry+added", status_code=303)
+
+
+@app.post("/bikes/{bike_id}/components/recommendation")
+async def recommend_bike_component_lifetime(
+    bike_id: int,
+    component_type: str = Form(...),
+    component_name: str = Form(...),
+):
+    """Look up a wear-distance suggestion only when the user requests it."""
+    user = initial_user()
+    clean_type, clean_name = component_type.strip(), component_name.strip()
+    if clean_type not in WEAR_COMPONENT_TYPES or not clean_name:
+        return JSONResponse({"detail": "Choose a component type and enter its name first."}, status_code=422)
+    with connection() as db:
+        if db.execute("SELECT 1 FROM bikes WHERE id=? AND user_id=?", (bike_id, user["id"])).fetchone() is None:
+            return JSONResponse({"detail": "Bike not found."}, status_code=404)
+        openai_settings = openai_research_settings(db, user["id"])
+    if not openai_settings["configured"]:
+        return JSONResponse({"detail": "Configure an OpenAI API key in Settings first."}, status_code=409)
+    try:
+        return JSONResponse(openai_component_recommendation(
+            str(openai_settings["api_key"]), str(openai_settings["model"]), clean_type, clean_name,
+        ))
+    except ValueError as error:
+        return JSONResponse({"detail": str(error)}, status_code=502)
+
+
+@app.post("/bikes/{bike_id}/components")
+async def add_bike_wear_component(
+    bike_id: int,
+    component_type: str = Form(...),
+    component_name: str = Form(...),
+    installed_date: str = Form(...),
+    expected_lifetime_km: str = Form(...),
+    warning_km: str = Form(""),
+    recommendation_notes: str = Form(""),
+    recommendation_sources_json: str = Form("[]"),
+):
+    """Attach an active wear component to one bike and start its mileage ledger."""
+    clean_type, clean_name = component_type.strip(), component_name.strip()
+    try:
+        if clean_type not in WEAR_COMPONENT_TYPES:
+            raise ValueError("Choose a valid component type.")
+        if not clean_name:
+            raise ValueError("A component name is required.")
+        installed = datetime.strptime(installed_date.strip(), "%Y-%m-%d").replace(tzinfo=LOCAL_TIMEZONE)
+        expected_m = float(expected_lifetime_km.strip().replace(",", ".")) * 1000
+        if not 0 < expected_m <= 1_000_000_000:
+            raise ValueError("Expected lifetime must be greater than zero.")
+        warning_m = float(warning_km.strip().replace(",", ".")) * 1000 if warning_km.strip() else expected_m * 0.8
+        if not 0 < warning_m <= expected_m:
+            raise ValueError("Warning mileage must be greater than zero and no higher than the expected lifetime.")
+        sources = json.loads(recommendation_sources_json or "[]")
+        if not isinstance(sources, list):
+            raise ValueError("Component recommendation sources are invalid.")
+        safe_sources = [
+            {"title": str(item.get("title") or "Source")[:160], "url": str(item.get("url") or "")[:2000]}
+            for item in sources[:3]
+            if isinstance(item, dict) and re.match(r"^https?://", str(item.get("url") or ""))
+        ]
+    except (TypeError, ValueError, json.JSONDecodeError) as error:
+        return RedirectResponse(
+            f"/bikes/{bike_id}?" + urlencode({"notice": str(error) or "Enter valid component details."}),
+            status_code=303,
+        )
+    user = initial_user()
+    with connection() as db:
+        if db.execute("SELECT 1 FROM bikes WHERE id=? AND user_id=?", (bike_id, user["id"])).fetchone() is None:
+            return RedirectResponse("/bikes?notice=Bike+not+found", status_code=303)
+        db.execute(
+            """INSERT INTO bike_wear_components
+               (bike_id, component_type, name, installed_date, installed_epoch, expected_lifetime_m,
+                warning_threshold, recommendation_notes, recommendation_sources_json)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+            (
+                bike_id, clean_type, clean_name[:240], installed.date().isoformat(), int(installed.timestamp()),
+                expected_m, warning_m / expected_m, recommendation_notes.strip()[:1000], json.dumps(safe_sources),
+            ),
+        )
+    return RedirectResponse(f"/bikes/{bike_id}?notice=Component+added", status_code=303)
+
+
+@app.post("/bikes/{bike_id}/components/{component_id}")
+async def update_bike_wear_component(
+    bike_id: int,
+    component_id: int,
+    component_type: str = Form(...),
+    component_name: str = Form(...),
+    installed_date: str = Form(...),
+    expected_lifetime_km: str = Form(...),
+    warning_km: str = Form(...),
+):
+    """Update a component's service assumptions without changing its bike."""
+    clean_type, clean_name = component_type.strip(), component_name.strip()
+    try:
+        if clean_type not in WEAR_COMPONENT_TYPES:
+            raise ValueError("Choose a valid component type.")
+        if not clean_name:
+            raise ValueError("A component name is required.")
+        installed = datetime.strptime(installed_date.strip(), "%Y-%m-%d").replace(tzinfo=LOCAL_TIMEZONE)
+        expected_m = float(expected_lifetime_km.strip().replace(",", ".")) * 1000
+        warning_m = float(warning_km.strip().replace(",", ".")) * 1000
+        if not 0 < expected_m <= 1_000_000_000:
+            raise ValueError("Expected lifetime must be greater than zero.")
+        if not 0 < warning_m <= expected_m:
+            raise ValueError("Warning mileage must be greater than zero and no higher than the expected lifetime.")
+    except ValueError as error:
+        return RedirectResponse(
+            f"/bikes/{bike_id}?" + urlencode({"notice": str(error) or "Enter valid component details."}),
+            status_code=303,
+        )
+    user = initial_user()
+    with connection() as db:
+        component = db.execute(
+            """SELECT component.id FROM bike_wear_components component
+               JOIN bikes bike ON bike.id=component.bike_id
+               WHERE component.id=? AND component.bike_id=? AND bike.user_id=?""",
+            (component_id, bike_id, user["id"]),
+        ).fetchone()
+        if component is None:
+            return RedirectResponse("/bikes?notice=Component+not+found", status_code=303)
+        db.execute(
+            """UPDATE bike_wear_components
+               SET component_type=?, name=?, installed_date=?, installed_epoch=?, expected_lifetime_m=?,
+                   warning_threshold=?, updated_at=CURRENT_TIMESTAMP
+               WHERE id=?""",
+            (
+                clean_type, clean_name[:240], installed.date().isoformat(), int(installed.timestamp()), expected_m,
+                warning_m / expected_m, component_id,
+            ),
+        )
+    return RedirectResponse(f"/bikes/{bike_id}?notice=Component+updated", status_code=303)
+
+
+@app.post("/bikes/{bike_id}/components/{component_id}/delete")
+def delete_bike_wear_component(bike_id: int, component_id: int):
+    """Remove a component and its independent mileage lifecycle from its bike."""
+    user = initial_user()
+    with connection() as db:
+        component = db.execute(
+            """SELECT component.id FROM bike_wear_components component
+               JOIN bikes bike ON bike.id=component.bike_id
+               WHERE component.id=? AND component.bike_id=? AND bike.user_id=?""",
+            (component_id, bike_id, user["id"]),
+        ).fetchone()
+        if component is None:
+            return RedirectResponse("/bikes?notice=Component+not+found", status_code=303)
+        db.execute("DELETE FROM bike_wear_components WHERE id=?", (component_id,))
+    return RedirectResponse(f"/bikes/{bike_id}?notice=Component+deleted", status_code=303)
 
 
 @app.post("/bikes/{bike_id}/delete")
